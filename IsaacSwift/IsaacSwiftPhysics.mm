@@ -1757,8 +1757,8 @@ struct AnymalSimState {
                 : nil;
             const NSUInteger n = actuator != nil ? MIN((NSUInteger)jointCount, torques.count) : (NSUInteger)jointCount;
             // IsaacSim's ANYmal LSTM SEA wrapper clips actuator effort to
-            // ±80 N·m. Keep that separate from the local PD assist limit,
-            // which remains controlled by `maxJointTorque`.
+            // ±80 N·m. Keep that separate from the direct position-motor
+            // fallback limit, which remains controlled by `maxJointTorque`.
             for (NSUInteger i = 0; i < n; ++i) {
                 float tau;
                 float torqueLimit;

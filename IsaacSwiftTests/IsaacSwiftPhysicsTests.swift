@@ -911,10 +911,10 @@ struct IsaacSwiftPhysicsTests {
         sim.maxJointTorque = c.maxTorque
         sim.motorTargetSmoothingTau = c.smoothingTau
         sim.spawnPositionWorld = SIMD3<Float>(0, 0, c.spawnZ)
-        // Wire the ANYdrive actuator network into the simulator. The local
-        // Jolt path keeps a default-pose PD assist spring and layers the
-        // LSTM torque on top; pure PD cannot reproduce the actuator dynamics
-        // ANYmal was trained against. The runner falls back to the repository's
+        // Wire the ANYdrive actuator network into the simulator. With the
+        // actuator installed the Jolt hinge motor is disabled and the LSTM
+        // effort is applied directly, matching Isaac Lab's actuator path.
+        // The runner falls back to the repository's
         // `PolicyModels/anymal_actuator.mlmodelc` when the test bundle does
         // not embed the resource.
         if let actuator = try? AnymalActuatorRunner(bundle: .main) {
@@ -982,20 +982,36 @@ struct IsaacSwiftPhysicsTests {
         let full = env["ISAACSWIFT_ANYMAL_PERM_SWEEP_FULL"] == "1"
         let seconds = Double(env["ISAACSWIFT_ANYMAL_PERM_SWEEP_SECONDS"] ?? "") ?? 10.0
 
-        // Tuned by `anymalPolicyJointPermutationAndGainSweep`: with the
-        // ANYdrive ActuatorNetLSTM installed via `AnymalActuatorRunner`,
-        // a low PD anchored at the default pose plus a moderate command
-        // is the current best Jolt approximation.
-        let gainGrid: [(Float, Float, Float)] = full
-            ? [(80, 2, 80), (120, 6, 120), (160, 8, 120),
-               (200, 10, 120), (240, 12, 120), (300, 15, 120)]
-            : [(PolicyPhysicsLoop.anymalActuatorTuning.jointStiffness,
-                PolicyPhysicsLoop.anymalActuatorTuning.jointDamping,
-                PolicyPhysicsLoop.anymalActuatorTuning.maxJointTorque)]
-        let scales: [Float] = full ? [0.1, 0.15, 0.2, 0.3, 0.5, 0.7] : [IsaacPolicyRuntimeConfiguration.anymalC.actionScale]
-        let commands: [Float] = full ? [0.0, 0.4, 0.8] : [IsaacPolicyRuntimeConfiguration.anymalC.defaultCommand.x]
-        let spawnZs: [Float] = full ? [0.58, 0.60, 0.62] : [PolicyPhysicsLoop.anymalActuatorTuning.spawnZ]
-        let taus: [Float] = full ? [0.008, 0.025, 0.050, 0.080] : [0.0]
+        if !full {
+            let provider = DemoPolicyActionProvider(runner: runner,
+                                                    configuration: IsaacPolicyRuntimeConfiguration.anymalC)
+            let loop = PolicyPhysicsLoop(robotKind: IsaacPolicyRuntimeConfiguration.anymalC.robotKind,
+                                         provider: provider)
+            loop.reset()
+            #expect(loop.simulator.jointActuator != nil,
+                    "ANYmal runtime loop did not install AnymalActuatorRunner")
+            let stats = runLoop(loop, seconds: seconds)
+            #expect(!stats.sawNaN)
+            #expect(stats.minBaseUprightZ > 0.85,
+                    "runtime uprightZ dipped to \(stats.minBaseUprightZ)")
+            #expect(stats.minBaseZ > 0.30,
+                    "runtime base dropped to z=\(stats.minBaseZ)")
+            #expect(stats.endBasePos.x > 1.0,
+                    "runtime x displacement was only \(stats.endBasePos.x)m over \(seconds) s")
+            return
+        }
+
+        // Full mode keeps the old exploratory grid for diagnosing direct-PD
+        // fallback regressions. The normal ActuatorNet path is checked above
+        // through the actual runtime loop.
+        let gainGrid: [(Float, Float, Float)] = [
+            (80, 2, 80), (120, 6, 120), (160, 8, 120),
+            (200, 10, 120), (240, 12, 120), (300, 15, 120),
+        ]
+        let scales: [Float] = [0.1, 0.15, 0.2, 0.3, 0.5, 0.7]
+        let commands: [Float] = [0.0, 0.4, 0.8]
+        let spawnZs: [Float] = [0.58, 0.60, 0.62]
+        let taus: [Float] = [0.008, 0.025, 0.050, 0.080]
         let perms = [("runtime",
                       IsaacPolicyRuntimeConfiguration.anymalC.simToPolicyJointPermutation)]
 

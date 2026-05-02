@@ -102,10 +102,10 @@ typedef NS_ENUM(NSInteger, IsaacSwiftRobotKind) {
 /// Optional learned actuator (e.g. ANYmal's `sea_net_jit2.pt` ported to
 /// CoreML). The commanded scaled action is treated as a target joint angle
 /// delta; the simulator computes `pos_err = target - current` and
-/// `joint_vel` and hands them to the actuator. In Isaac Sim this runs as
-/// pure effort control; the local Jolt approximation keeps a small PD spring
-/// at the default pose to stabilize the simplified articulation. Setting
-/// this to `nil` reverts to the built-in PD target-tracking path.
+/// `joint_vel` and hands them to the actuator. When an actuator is installed,
+/// the hinge position motor is disabled and the returned effort is applied as
+/// a parent/child torque pair. Setting this to `nil` reverts to the built-in
+/// PD target-tracking path.
 @property (nonatomic, strong, nullable) id<IsaacSwiftJointActuator> jointActuator;
 
 - (instancetype)initWithRobotKind:(IsaacSwiftRobotKind)robotKind

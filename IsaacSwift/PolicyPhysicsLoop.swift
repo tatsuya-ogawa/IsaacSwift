@@ -16,22 +16,9 @@ import simd
 /// * ANYmal-C: `physics_dt = 1/200`, `decimation = 4`
 /// * Spot Flat: `physics_dt = 1/500`, `decimation = 10`
 /// * policy runs at 50 Hz for both
-/// * PD position drive on each hinge (`Kp`/`Kd` baked into the simulator)
+/// * direct position policies use the simulator's hinge position motor
+/// * learned actuator policies disable the hinge motor and apply effort
 final class PolicyPhysicsLoop {
-    struct AnymalActuatorRuntimeTuning: Equatable {
-        let jointStiffness: Float
-        let jointDamping: Float
-        let maxJointTorque: Float
-        let motorTargetSmoothingTau: Float
-        let spawnZ: Float
-    }
-
-    static let anymalActuatorTuning = AnymalActuatorRuntimeTuning(jointStiffness: 80,
-                                                                  jointDamping: 6,
-                                                                  maxJointTorque: 120,
-                                                                  motorTargetSmoothingTau: 0,
-                                                                  spawnZ: 0.58)
-
     /// Action scale for this loop's robot kind (Isaac Lab `action_scale`).
     var actionScale: Float { configuration.actionScale }
 
@@ -84,14 +71,10 @@ final class PolicyPhysicsLoop {
         self.init(simulator: sim, configuration: configuration, provider: provider)
     }
 
-    /// For ANYmal-C we always pair the simulator with the bundled ANYdrive
-    /// `ActuatorNetLSTM` (`AnymalActuatorRunner`). The runner adds a learned
-    /// torque on top of the hinge PD; together with a low PD anchored at
-    /// the default pose this is what lets the bundled CoreML policy walk
-    /// forward for the full eval window. The simulator's stock PD-only
-    /// defaults (kp=80, kd=2, maxTorque=40) are tuned for the actuator-
-    /// less path, so we override them here when the LSTM is installed.
-    /// Other robot kinds use the plain PD-only path with their own defaults.
+    /// For ANYmal-C we pair the simulator with the bundled ANYdrive
+    /// `ActuatorNetLSTM` (`AnymalActuatorRunner`). This matches Isaac Lab's
+    /// actuator path: policy target delta -> actuator position error/velocity
+    /// -> effort. Other robot kinds use the direct position-motor path.
     private static func installDefaultActuator(on simulator: IsaacSwiftAnymalSimulator,
                                                configuration: IsaacPolicyRuntimeConfiguration) {
         guard configuration.robotKind == .anymalC, simulator.jointActuator == nil else { return }
@@ -101,15 +84,6 @@ final class PolicyPhysicsLoop {
         } catch {
             fatalError("ANYmal actuator warm-up failed: \(error)")
         }
-        // Tuned by `anymalPolicyJointPermutationAndGainSweep`: keeps ANYmal
-        // upright and walking when paired with the LSTM actuator. Tests read
-        // this same value instead of keeping their own copy.
-        let tuning = anymalActuatorTuning
-        simulator.jointStiffness = tuning.jointStiffness
-        simulator.jointDamping = tuning.jointDamping
-        simulator.maxJointTorque = tuning.maxJointTorque
-        simulator.motorTargetSmoothingTau = tuning.motorTargetSmoothingTau
-        simulator.spawnPositionWorld = SIMD3<Float>(0, 0, tuning.spawnZ)
         simulator.jointActuator = actuator
         simulator.reset()
     }
