@@ -16,8 +16,8 @@ private struct RolloutStats {
     var minBaseZ: Float = .greatestFiniteMagnitude
     var maxBaseZ: Float = -.greatestFiniteMagnitude
     var minBaseUprightZ: Float = .greatestFiniteMagnitude
-    var minJointDeltas: [Float] = Array(repeating: .greatestFiniteMagnitude, count: 12)
-    var maxJointDeltas: [Float] = Array(repeating: -.greatestFiniteMagnitude, count: 12)
+    var minJointDeltas: [Float] = Array(repeating: .greatestFiniteMagnitude, count: 19)
+    var maxJointDeltas: [Float] = Array(repeating: -.greatestFiniteMagnitude, count: 19)
     var maxAbsJointDelta: Float = 0
     var maxAbsJointVelocity: Float = 0
     var sawNaN: Bool = false
@@ -304,6 +304,29 @@ struct IsaacSwiftPhysicsTests {
         }
     }
 
+    @Test func h1FreshObservationHasNineteenFiniteJoints() {
+        let config = IsaacPolicyRuntimeConfiguration.h1Flat
+        let sim = IsaacSwiftAnymalSimulator(robotKind: config.robotKind,
+                                            physicsTimeStep: config.physicsTimeStep)
+        let obs = sim.currentObservation()
+        #expect(sim.jointCount == 19)
+        #expect(obs.jointPositions.count == 19)
+        #expect(obs.jointPositionDeltas.count == 19)
+        #expect(obs.jointVelocities.count == 19)
+        #expect(obs.basePositionWorld.z.isFinite)
+        #expect(abs(obs.basePositionWorld.z - sim.spawnPositionWorld.z) <= 0.002,
+                "H1 base observation should report the USD pelvis origin, not COM")
+        let defaults = sim.defaultJointPositions.map { $0.floatValue }
+        for (index, position) in obs.jointPositions.enumerated() {
+            #expect(abs(position.floatValue) <= 1e-3,
+                    "H1 starts from the USD zero pose; joint \(index) was \(position)")
+        }
+        for (index, delta) in obs.jointPositionDeltas.enumerated() {
+            #expect(abs(delta.floatValue + defaults[index]) <= 1e-3,
+                    "H1 policy observation should report zero pose minus default; joint \(index) delta=\(delta)")
+        }
+    }
+
     // MARK: - Simulator convergence
 
     @Test func robotStandsStablyWithZeroAction() {
@@ -355,6 +378,29 @@ struct IsaacSwiftPhysicsTests {
                 "uprightZ dipped to \(stats.minBaseUprightZ)")
         #expect(stats.maxAbsJointDelta < 0.15)
         #expect(stats.maxAbsJointVelocity < 8.0)
+    }
+
+    @Test func h1CoreMLPolicyStaysUprightWithZeroCommand() throws {
+        let configuration = PolicyModelConfiguration.h1
+        guard PolicyModelRunner.bundledModelURL(configuration: configuration) != nil ||
+              PolicyModelRunner.repositoryModelURL(configuration: configuration).map({ FileManager.default.fileExists(atPath: $0.path) }) == true
+        else { return }
+
+        let runner = try PolicyModelRunner(configuration: configuration)
+        let cfg = IsaacPolicyRuntimeConfiguration.h1Flat
+        let provider = DemoPolicyActionProvider(runner: runner,
+                                                configuration: cfg,
+                                                command: SIMD3<Float>(0, 0, 0))
+        let loop = PolicyPhysicsLoop(robotKind: cfg.robotKind, provider: provider)
+        loop.reset()
+        let stats = runLoop(loop, seconds: 3.0)
+
+        #expect(!stats.sawNaN)
+        #expect(stats.minBaseZ > 0.55,
+                "H1 base dropped to z=\(stats.minBaseZ)")
+        #expect(stats.minBaseUprightZ > 0.85,
+                "H1 uprightZ dipped to \(stats.minBaseUprightZ)")
+        #expect(stats.maxAbsJointVelocity < 80.0)
     }
 
     @Test func actuatorPositiveTorqueMatchesPositiveMotorTargetDirection() {
@@ -1073,6 +1119,57 @@ struct IsaacSwiftPhysicsTests {
         }
         #expect(min(result.minJointDeltas[2], result.minJointDeltas[5]) < -0.02,
                 "front KFE joints never reached forward-swing deltas")
+    }
+
+    @Test func h1CoreMLPolicyStaysUprightOnFlatGround() throws {
+        let configuration = PolicyModelConfiguration.h1
+        guard PolicyModelRunner.bundledModelURL(configuration: configuration) != nil ||
+              PolicyModelRunner.repositoryModelURL(configuration: configuration).map({ FileManager.default.fileExists(atPath: $0.path) }) == true
+        else { return }
+
+        let runner = try PolicyModelRunner(configuration: configuration)
+        let cfg = IsaacPolicyRuntimeConfiguration.h1Flat
+        let provider = DemoPolicyActionProvider(runner: runner,
+                                                configuration: cfg)
+        let loop = PolicyPhysicsLoop(robotKind: cfg.robotKind, provider: provider)
+        loop.reset()
+        let result = runLoop(loop, seconds: 10.0)
+
+        #expect(!result.sawNaN)
+        #expect(result.minBaseUprightZ > 0.95,
+                "uprightZ dipped to \(result.minBaseUprightZ) — H1 tilted")
+        #expect(result.minBaseZ > 0.55,
+                "base dropped to z=\(result.minBaseZ) — H1 collapsed")
+        #expect(result.maxAbsJointDelta <= Float.pi + 0.1)
+        #expect(result.endBasePos.x > 1.0,
+                "x displacement was only \(result.endBasePos.x)m over 10 s")
+        #expect(result.maxJointDeltas[6] - result.minJointDeltas[6] > 0.15,
+                "left ankle barely moved during H1 policy rollout")
+        #expect(result.maxJointDeltas[10] - result.minJointDeltas[10] > 0.15,
+                "right ankle barely moved during H1 policy rollout")
+    }
+
+    @Test func h1RendererCadencePolicyLoopWalksForward() throws {
+        let configuration = PolicyModelConfiguration.h1
+        guard PolicyModelRunner.bundledModelURL(configuration: configuration) != nil ||
+              PolicyModelRunner.repositoryModelURL(configuration: configuration).map({ FileManager.default.fileExists(atPath: $0.path) }) == true
+        else { return }
+
+        let runner = try PolicyModelRunner(configuration: configuration)
+        let cfg = IsaacPolicyRuntimeConfiguration.h1Flat
+        let provider = DemoPolicyActionProvider(runner: runner,
+                                                configuration: cfg)
+        let loop = PolicyPhysicsLoop(robotKind: cfg.robotKind, provider: provider)
+        loop.reset()
+        let result = runLoop(loop, seconds: 10.0, controlInterval: 1.0 / 60.0)
+
+        #expect(!result.sawNaN)
+        #expect(result.minBaseUprightZ > 0.95,
+                "renderer-cadence uprightZ dipped to \(result.minBaseUprightZ), end=\(result.endBaseUprightZ), x=\(result.endBasePos.x)")
+        #expect(result.minBaseZ > 0.55,
+                "renderer-cadence base dropped to z=\(result.minBaseZ)")
+        #expect(result.endBasePos.x > 1.0,
+                "renderer-cadence x displacement was only \(result.endBasePos.x)m over 10 s")
     }
 
     @Test func anymalRendererCadencePolicyLoopWalksForward() throws {

@@ -54,19 +54,20 @@ final class PhysicsDebugViewModel: ObservableObject {
         var baseLinVelB: SIMD3<Float> = .zero
         var baseAngVelB: SIMD3<Float> = .zero
         var gravityB: SIMD3<Float> = SIMD3<Float>(0, 0, -1)
-        var jointPositionDeltas: [Float] = Array(repeating: 0, count: 12)
-        var jointVelocities: [Float] = Array(repeating: 0, count: 12)
+        var jointPositionDeltas: [Float] = []
+        var jointVelocities: [Float] = []
         var uprightZ: Float = 1.0
 
         static let zero = ObservationSnapshot()
     }
 
-    static let jointNames = [
-        "LF_HAA", "LF_HFE", "LF_KFE",
-        "RF_HAA", "RF_HFE", "RF_KFE",
-        "LH_HAA", "LH_HFE", "LH_KFE",
-        "RH_HAA", "RH_HFE", "RH_KFE",
-    ]
+    var jointNames: [String] {
+        robotKind.modelDefinition.articulationProfile.policyJointBindings
+            .sorted { $0.actionIndex < $1.actionIndex }
+            .map { binding in
+                String(binding.nodePath.split(separator: "/").last ?? "?")
+            }
+    }
 
     /// Use the shared loop from the renderer (pauses it for stepping).
     init(sharedLoop: PolicyPhysicsLoop) {
@@ -209,8 +210,14 @@ final class PhysicsDebugViewModel: ObservableObject {
         lines.append("upright_z:   \(String(format: "%.4f", obs.uprightZ))")
         lines.append("")
         lines.append("-- Joints (delta / vel / raw_act / scaled_act) --")
-        for i in 0..<12 {
-            let name = Self.jointNames[i].padding(toLength: 7, withPad: " ", startingAt: 0)
+        let names = jointNames
+        let count = min(names.count,
+                        obs.jointPositionDeltas.count,
+                        obs.jointVelocities.count,
+                        rawActions.count,
+                        scaledActions.count)
+        for i in 0..<count {
+            let name = names[i].padding(toLength: 24, withPad: " ", startingAt: 0)
             let d = String(format: "%+.4f", obs.jointPositionDeltas[i])
             let v = String(format: "%+.3f", obs.jointVelocities[i])
             let r = String(format: "%+.4f", rawActions[i])
@@ -323,9 +330,15 @@ struct PhysicsInspectorView: View {
             .foregroundColor(.secondary)
             .padding(.bottom, 4)
 
-            ForEach(0..<12, id: \.self) { i in
+            let names = vm.jointNames
+            let count = min(names.count,
+                            vm.obs.jointPositionDeltas.count,
+                            vm.obs.jointVelocities.count,
+                            vm.rawActions.count,
+                            vm.scaledActions.count)
+            ForEach(0..<count, id: \.self) { i in
                 HStack(spacing: 0) {
-                    Text(PhysicsDebugViewModel.jointNames[i])
+                    Text(names[i])
                         .frame(width: 60, alignment: .leading)
                     coloredValue(vm.obs.jointPositionDeltas[i], threshold: 1.5)
                         .frame(width: 70, alignment: .trailing)

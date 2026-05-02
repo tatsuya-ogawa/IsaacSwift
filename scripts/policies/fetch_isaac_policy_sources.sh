@@ -39,6 +39,15 @@ fetch_anymal() {
   echo "Fetched ANYmal policy sources into $dest_dir"
 }
 
+fetch_h1() {
+  local dest_dir="$policy_source_root/H1_Policies"
+  download "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.5/Isaac/Samples/Policies/H1_Policies/h1_policy.pt" \
+           "$dest_dir/h1_policy.pt"
+  download "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.5/Isaac/Samples/Policies/H1_Policies/h1_env.yaml" \
+           "$dest_dir/h1_env.yaml"
+  echo "Fetched H1 policy sources into $dest_dir"
+}
+
 case "$selection" in
   spot)
     fetch_spot
@@ -46,12 +55,16 @@ case "$selection" in
   anymal)
     fetch_anymal
     ;;
+  h1)
+    fetch_h1
+    ;;
   all)
     fetch_spot
     fetch_anymal
+    fetch_h1
     ;;
   *)
-    echo "Usage: $0 [spot|anymal|all]" >&2
+    echo "Usage: $0 [spot|anymal|h1|all]" >&2
     exit 1
     ;;
 esac

@@ -15,15 +15,14 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-/// Selects which quadruped morphology + parameter set the simulator should
-/// instantiate. Both kinds share the same articulation topology
-/// (floating base + 4 legs × 3 hinges) but use different masses, link
-/// dimensions, default poses, and PD gains tuned to each policy's training
-/// distribution.
+/// Selects which morphology + parameter set the simulator should
+/// instantiate. The quadrupeds share a floating-base 12-DOF leg topology;
+/// H1 uses its 19-DOF humanoid articulation.
 typedef NS_ENUM(NSInteger, IsaacSwiftRobotKind) {
     IsaacSwiftRobotKindAnymalC = 0,
     IsaacSwiftRobotKindSpot    = 1,
     IsaacSwiftRobotKindGo2     = 2,
+    IsaacSwiftRobotKindH1      = 3,
 };
 
 /// Snapshot of the simulator state in the conventions Isaac Sim's ANYmal policy
@@ -59,11 +58,20 @@ typedef NS_ENUM(NSInteger, IsaacSwiftRobotKind) {
 
 /// Headless ANYmal-like articulated body simulator. The model is intentionally
 /// approximate (one floating base + four 3-DOF legs articulated through hinges
-/// with PD position motors). Joint indexing matches Isaac Sim's flat-terrain
-/// policy:
+/// with PD position motors). Quadruped joint indexing matches Isaac Sim's
+/// flat-terrain policy:
 ///
 ///   `[LF_HAA, LF_HFE, LF_KFE, RF_HAA, RF_HFE, RF_KFE,
 ///     LH_HAA, LH_HFE, LH_KFE, RH_HAA, RH_HFE, RH_KFE]`
+///
+/// H1 uses the local USD/Jolt hinge order; policy I/O is remapped separately
+/// by `IsaacPolicyRuntimeConfiguration.h1Flat`:
+///
+///   `[left_hip_yaw, right_hip_yaw, torso, left_hip_roll, left_hip_pitch,
+///     left_knee, left_ankle, right_hip_roll, right_hip_pitch, right_knee,
+///     right_ankle, left_shoulder_pitch, right_shoulder_pitch,
+///     left_shoulder_roll, left_shoulder_yaw, left_elbow,
+///     right_shoulder_roll, right_shoulder_yaw, right_elbow]`
 @interface IsaacSwiftAnymalSimulator : NSObject
 
 @property (nonatomic, readonly) IsaacSwiftRobotKind robotKind;
@@ -75,8 +83,8 @@ typedef NS_ENUM(NSInteger, IsaacSwiftRobotKind) {
 /// Time-constant (seconds) for the EMA low-pass on motor target angles. The
 /// commanded target is filtered with `alpha = dt / (tau + dt)` per substep.
 /// This approximates SEA / actuator-network smoothing of the policy output.
-/// Default is 8 ms (Spot's Isaac Lab delay). ANYmal-C trained against an
-/// LSTM actuator network typically benefits from a longer constant.
+/// Default is 8 ms for quadruped PD paths and 0 ms for H1, matching Isaac
+/// Sim's direct per-step `ArticulationAction(joint_positions=...)` path.
 @property (nonatomic, assign)   float motorTargetSmoothingTau;
 /// Recommended `action_scale` for this robot's local Jolt-backed policy loop.
 /// The policy loop multiplies raw policy outputs by this value before treating
@@ -85,7 +93,8 @@ typedef NS_ENUM(NSInteger, IsaacSwiftRobotKind) {
 /// Recommended physics step for this robot's policy/simulator pairing.
 /// ANYmal-C and Go2 use 1/200 s; Spot Flat uses Isaac Lab's 1/500 s.
 @property (nonatomic, readonly) double recommendedPhysicsTimeStep;
-/// Default joint positions used as the policy's reference pose. Length 12.
+/// Default joint positions used as the policy's reference pose. Length equals
+/// `jointCount`.
 @property (nonatomic, copy)     NSArray<NSNumber *> *defaultJointPositions;
 /// World-space spawn pose for the base; written by `reset`.
 @property (nonatomic, assign)   simd_float3 spawnPositionWorld;

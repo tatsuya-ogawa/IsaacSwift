@@ -5,13 +5,13 @@
 ![Metal 4](https://img.shields.io/badge/Metal-4-black.svg)
 ![Core ML](https://img.shields.io/badge/Core%20ML-on--device-lightgrey.svg)
 
-Run Isaac Lab-style quadruped policies directly inside a native Apple runtime.
+Run Isaac Lab-style legged robot policies directly inside a native Apple runtime.
 
 IsaacSwift rebuilds the pieces a trained robot policy needs at execution time: local articulation physics, on-device policy inference, and Metal 4 rendering. It does not embed Isaac Sim. It takes Isaac Sim / Isaac Lab assets and policies as source material, converts them into app-facing artifacts, then runs the control loop on iPhone and iPad-class hardware.
 
-| Spot | ANYmal-C |
-| --- | --- |
-| ![Spot walking in IsaacSwift](docs/spot.gif) | ![ANYmal-C walking in IsaacSwift](docs/anymal.gif) |
+| Spot | ANYmal-C | H1 |
+| --- | --- | --- |
+| ![Spot walking in IsaacSwift](docs/spot.gif) | ![ANYmal-C walking in IsaacSwift](docs/anymal.gif) | ![H1 walking in IsaacSwift](docs/h1.gif)
 
 ## Why This Exists
 
@@ -22,7 +22,7 @@ Robotics policies are often trained in heavyweight simulation stacks, then deplo
 - **Metal 4** renders the robot assets with a modern Apple GPU baseline.
 - **USD-derived metadata** keeps body origins, masses, COM offsets, joint frames, and foot contact topology tied back to the source robot assets.
 
-The result is a native Swift runtime where Isaac-trained quadrupeds can walk without launching Isaac Sim.
+The result is a native Swift runtime where Isaac-trained legged robots can walk without launching Isaac Sim.
 
 ## Current Robot Support
 
@@ -31,6 +31,7 @@ The result is a native Swift runtime where Isaac-trained quadrupeds can walk wit
 | Spot | Working | Default robot. The flat-terrain policy walks in the Swift + Jolt runtime with USD-derived physics topology. |
 | ANYmal-C | Working | The flat-terrain policy and ANYdrive actuator model walk in the Swift + Jolt runtime with USD-derived physics topology. |
 | Unitree Go2 | Partial | Asset loading and articulation plumbing exist. A dedicated Go2 policy integration is future work. |
+| Unitree H1 | Experimental | H1 Flat Terrain policy conversion, 19-DOF articulation metadata, USDZ packaging, and Jolt-side humanoid physics plumbing are available. |
 
 ## Architecture
 
@@ -134,6 +135,7 @@ This generates:
 IsaacSwift/RobotAssets/anymal_c/anymal_c.usdz
 IsaacSwift/RobotAssets/spot/spot.usdz
 IsaacSwift/RobotAssets/go2/go2.usdz
+IsaacSwift/RobotAssets/h1/h1.usdz
 ```
 
 You usually need to regenerate assets only on a new checkout, after changing the packaging scripts, or while debugging USD references, textures, or material conversion.
@@ -153,6 +155,7 @@ This generates:
 ```text
 PolicyModels/spot_policy.mlmodelc
 PolicyModels/anymal_policy.mlmodelc
+PolicyModels/h1_policy.mlmodelc
 ```
 
 You can build one policy at a time with:
@@ -160,6 +163,7 @@ You can build one policy at a time with:
 ```bash
 make spot-policy-model
 make anymal-policy-model
+make h1-policy-model
 ```
 
 Go2 currently reuses the Spot policy as a temporary placeholder when selected in the app.
