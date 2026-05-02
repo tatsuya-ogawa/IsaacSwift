@@ -198,12 +198,12 @@ must match the runtime configuration, asserted by
 |---|---|---|
 | `physics_dt` | `1/200 s` | Isaac Lab ANYmal training |
 | `decimation` | `4` (policy at 50 Hz) | Isaac Lab |
-| `kp` | **80** N·m/rad | Isaac Lab spec, used as a default-pose assist spring with ActuatorNet |
-| `kd` | **6** N·m·s/rad | tuned damping for the Jolt + ActuatorNet path |
-| `max_torque` | **120** N·m | tuned effort cap for the Jolt + ActuatorNet path |
+| `kp` / `kd` | fallback PD only | not used while `AnymalActuatorRunner` is installed |
+| actuator `effort_limit` | **80** N·m | `ActuatorNetLSTM` effort limit |
+| actuator `saturation_effort` | **120** N·m | `anymal_env.yaml` |
 | `action_scale` | **0.5** | matches ANYmal controller `_action_scale = 0.5` |
-| `default_command` | `(0.4, 0, 0)` m/s | conservative UI/debug default |
-| `spawn_z` | 0.58 m in the ActuatorNet path | tuned Jolt spawn height near Isaac Sim's stand height |
+| `default_command` | `(1.0, 0, 0)` m/s | app/test rollout default |
+| `spawn_z` | **0.60 m** | `anymal_env.yaml` `init_state.pos` |
 | Default pose | `[0,0.4,−0.8; 0,0.4,−0.8; 0,−0.4,0.8; 0,−0.4,0.8]` (LF,RF,LH,RH) | `anymal_env.yaml` |
 | `simToPolicy` | `[0,4,8, 2,6,10, 1,5,9, 3,7,11]` | bundled export + sweep |
 
@@ -211,9 +211,11 @@ must match the runtime configuration, asserted by
 > ANYmal-C uses an `ActuatorNetLSTM` learned actuator. In Isaac Sim the
 > policy action is converted to a target position, the actuator network sees
 > `(target + default_joint_pos - joint_pos, joint_vel)` every physics step,
-> and the resulting torque is applied as effort. The local Jolt model keeps
-> a small default-pose PD spring while layering the learned torque on top;
-> pure effort control currently falls over in the simplified articulation.
+> and the resulting torque is applied as effort. The local Jolt path now
+> follows that architecture: when `AnymalActuatorRunner` is installed, hinge
+> position motors are disabled and the learned effort is applied directly as a
+> parent/child torque pair. The simulator's PD gains are only the fallback
+> path used when no actuator is installed.
 
 ### 4.3 Unitree H1 — `kH1Config` / `IsaacPolicyRuntimeConfiguration.h1Flat`
 
