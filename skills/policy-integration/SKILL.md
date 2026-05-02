@@ -1,11 +1,11 @@
 ---
 name: isaacswift-policy-integration
-description: Use this skill when integrating, porting, tuning, or debugging Isaac Lab quadruped policies in IsaacSwift's Swift/Jolt simulator, including joint permutations, observation layout, PD gains, action scale, and policy cadence.
+description: Use this skill when integrating, porting, tuning, or debugging Isaac Lab locomotion policies in IsaacSwift's Swift/Jolt simulator, including joint permutations, observation layout, PD gains, action scale, policy cadence, and final verification.
 ---
 
 # Isaac Lab Policy → Swift / Jolt Integration Guide
 
-This document describes how to integrate a quadruped (or other) reinforcement
+This document describes how to integrate a quadruped, humanoid, or other reinforcement
 learning policy that was trained inside **Isaac Sim / Isaac Lab** with the
 local Swift + Jolt simulator in this repo. It is the post-mortem of the Spot
 "falls over immediately" bug and a checklist for porting future models
@@ -33,7 +33,7 @@ either drift, oscillate, or fall over within ~1 s.
 | # | Assumption | Where it lives |
 |---|---|---|
 | **1** | The 12 (or N) actions are emitted in **PhysX `dof_names` order**, not URDF / asset declaration order. | Isaac Sim articulation traversal |
-| **2** | The 48-dim observation is **`[lin_vel_b(3), ang_vel_b(3), projected_gravity_b(3), command(3), joint_pos_delta(12), joint_vel(12), prev_action(12)]`** in the same dof order. | Isaac Lab `LocomotionVelocityRoughEnv` |
+| **2** | The observation is **`[lin_vel_b(3), ang_vel_b(3), projected_gravity_b(3), command(3), joint_pos_delta(N), joint_vel(N), prev_action(N)]`** in the same dof order. For 12-DOF quadrupeds this is 48 dims; for H1 it is 69 dims. | Isaac Lab `LocomotionVelocityRoughEnv` |
 | **3** | Each joint runs a **PD position drive** with stiffness `Kp`, damping `Kd`, effort/velocity limits, and an **action scale** that is added to a **default standing pose**. | `spot_env.yaml` / `anymal_env.yaml` |
 | **4** | The policy is queried **once per `decimation` physics steps**, with `physics_dt` matching what the network was trained on. | `policy_controller.py` |
 
@@ -121,6 +121,7 @@ Used in **two places** inside `DemoPolicyActionProvider`:
 |---|---|
 | ANYmal-C | `[0, 4, 8,   2, 6, 10,   1, 5, 9,   3, 7, 11]` |
 | Spot     | `[0, 4, 8,   1, 5, 9,    2, 6, 10,   3, 7, 11]` |
+| H1       | `[0, 1, 2,   3, 7, 11, 15,   4, 8, 12, 16,   5, 6,   9, 13, 17,   10, 14, 18]` |
 
 Both policies are type-grouped by joint depth, but their bundled exports do
 not use the same leg order: ANYmal-C is LF-LH-RF-RH, while Spot is
@@ -130,6 +131,7 @@ This is locked in by:
 
 - [`anymalSimToPolicyPermutationMatchesPhysXDofOrder()`](../../IsaacSwiftTests/IsaacSwiftTests.swift)
 - [`spotSimToPolicyPermutationMatchesPhysXDofOrder()`](../../IsaacSwiftTests/IsaacSwiftTests.swift)
+- [`h1SimToPolicyPermutationMatchesFlatTerrainDofOrder()`](../../IsaacSwiftTests/IsaacSwiftTests.swift)
 - [`simToPolicyJointPermutationsAreValidBijections()`](../../IsaacSwiftTests/IsaacSwiftTests.swift)
 
 ---
@@ -213,7 +215,60 @@ must match the runtime configuration, asserted by
 > a small default-pose PD spring while layering the learned torque on top;
 > pure effort control currently falls over in the simplified articulation.
 
-### 4.3 Other Isaac-Lab values reproduced in the simulator
+### 4.3 Unitree H1 — `kH1Config` / `IsaacPolicyRuntimeConfiguration.h1Flat`
+
+| Parameter | Value | Source |
+|---|---|---|
+| `physics_dt` | `1/200 s` | `h1_env.yaml` `sim.dt = 0.005` |
+| `decimation` | `4` (policy at 50 Hz) | `h1_env.yaml` |
+| `action_scale` | **0.5** | `H1FlatTerrainPolicy._action_scale = 0.5` / `h1_env.yaml` |
+| Drive path | Jolt position motor, no H1 external-torque drive | Isaac Sim `ArticulationAction(joint_positions=...)` |
+| Motor target smoothing | **0 s** | direct position targets are applied every physics step |
+| `default_command` | `(1.0, 0, 0)` m/s | Isaac Sim H1 example forward command |
+| `spawn_z` | `1.05 m` | Isaac Sim H1 example spawn position |
+| Observation shape | 69 = base(12) + joint_pos(19) + joint_vel(19) + prev_action(19) | `H1FlatTerrainPolicy._compute_observation` |
+| Action shape | 19 | H1 `robot.num_dof` |
+| `simToPolicy` | `[0,1,2, 3,7,11,15, 4,8,12,16, 5,6, 9,13,17, 10,14,18]` | PhysX traversal order from the Isaac Sim H1 policy |
+
+H1 is a 19-DOF direct position policy, not the quadruped 12-DOF layout. Do
+not run it through the 48-observation quadruped path. The local simulator's
+USD file order is:
+
+```text
+[left_hip_yaw, right_hip_yaw, torso,
+ left_hip_roll, left_hip_pitch, left_knee, left_ankle,
+ right_hip_roll, right_hip_pitch, right_knee, right_ankle,
+ left_shoulder_pitch, right_shoulder_pitch,
+ left_shoulder_roll, left_shoulder_yaw, left_elbow,
+ right_shoulder_roll, right_shoulder_yaw, right_elbow]
+```
+
+The H1 policy order is PhysX breadth-first traversal:
+
+```text
+[left_hip_yaw, right_hip_yaw, torso,
+ left_hip_roll, right_hip_roll,
+ left_shoulder_pitch, right_shoulder_pitch,
+ left_hip_pitch, right_hip_pitch,
+ left_shoulder_roll, right_shoulder_roll,
+ left_knee, right_knee,
+ left_shoulder_yaw, right_shoulder_yaw,
+ left_ankle, right_ankle,
+ left_elbow, right_elbow]
+```
+
+If H1 appears to stand and sway without walking, check the ankle ranges first.
+The ankles should move during a policy rollout, but useful walking only appears
+when observation and action arrays are remapped to this traversal order.
+
+H1 should spawn in the USD zero pose at `z = 1.05` and report
+`current_joint_pos - default_pos` to the policy. The action target is then
+`default_pos + action * 0.5`, applied through the Jolt position motor. Do not
+add an H1-specific external torque drive unless a future regression proves the
+position motor cannot hold the articulation; the current walking path passes
+without an external upright-assist fallback.
+
+### 4.4 Other Isaac-Lab values reproduced in the simulator
 
 - **Self-collision off** (`Layers::kMoving` does not collide with itself in
   the broad-phase / object filter).
@@ -225,7 +280,7 @@ must match the runtime configuration, asserted by
   actuator paths, prefer matching Isaac Sim's per-physics-step actuator call
   before adding smoothing; smoothing can hide cadence or actuator-state bugs.
 
-### 4.4 Policy actuator types matter
+### 4.5 Policy actuator types matter
 
 Before tuning gains, identify the controller type from the Isaac Sim robot
 class and environment YAML:
@@ -397,7 +452,63 @@ If these pass, the policy is production-ready in this app.
 
 ---
 
-## 7. Symptoms ↔ likely root causes
+## 7. Final verification runbook
+
+Before calling a policy/physics fix complete, run these checks in this order:
+
+1. Remove temporary debug gates and skips.
+   - Search for `if true { return }`, ad hoc env guards, and debug prints such
+     as `H1DBG` or `SWEEP`.
+   - Keep useful permanent assertions, such as ankle-range checks for H1 or
+     front-leg swing checks for quadrupeds.
+2. Lock the joint order.
+   - Add or update the static permutation test in
+     [`IsaacSwiftTests.swift`](../../IsaacSwiftTests/IsaacSwiftTests.swift).
+   - Run the focused static test before spending time on long rollouts.
+3. Confirm passive or stand-still stability.
+   - Run the robot's zero-action headless test when raw zero actions are a
+     valid hold-pose command.
+   - For H1, raw zero action is not the release invariant; run the CoreML
+     zero-command test instead because the humanoid stand-still behavior is
+     policy-controlled.
+   - It should stay finite, keep reasonable base height/uprightness, and not
+     build extreme joint velocity before policy feedback is involved.
+   - Prefer matching USD/Isaac solver, mass, inertia, drive, and contact
+     settings before adding external stabilization. Avoid stacking workaround
+     types; treat a Jolt-only stabilization fallback as a last resort that
+     requires a documented regression and focused H1 test coverage.
+4. Confirm the policy rollout.
+   - Run the focused CoreML policy test for the robot.
+   - For H1, require at least 1 m forward progress over 10 s and verify both
+     ankle joints have non-trivial range.
+   - For Spot/ANYmal, require forward progress plus upright/base-height checks.
+5. Restore broader coverage.
+   - Re-enable Spot, ANYmal, and diagnostics that were skipped during H1-only
+     debugging.
+   - Add a renderer-cadence regression when a symptom only appears on screen.
+   - Run `./scripts/agent-ci.sh` without arguments. This is the normal build
+     plus smoke coverage path for agents.
+6. Only use full sweeps when the focused tests fail.
+   - `ISAACSWIFT_SPOT_PERM_SWEEP_FULL=1 ./scripts/test-unit.sh`
+   - Add equivalent robot-specific sweep env gates when a new policy needs
+     broad tuning.
+7. If a renderer symptom remains, verify after the headless tests pass.
+   - The renderer should consume `PolicyPhysicsLoop` output, not a separate
+     UI-only stepping path.
+   - `basePositionWorld` should describe the USD base link origin used by the
+     renderer, not the inertial COM. Robots with non-zero COM offsets, such as
+     H1 pelvis, will otherwise look slightly sunk into or floating above the
+     ground even when the headless rollout is healthy.
+   - UI tests stay launch/smoke-level; walking, cadence, and policy correctness
+     belong in unit/headless tests.
+
+Do not finish with only a visual check. A robot that "looks like it moves" may
+still have incorrect policy order, previous-action order, actuator cadence, or
+contact feedback.
+
+---
+
+## 8. Symptoms ↔ likely root causes
 
 | Symptom | Likely cause | Where to look |
 |---|---|---|
@@ -409,10 +520,15 @@ If these pass, the policy is production-ready in this app.
 | Base "teleports" between frames | `step:` accumulator not draining; check `elapsed` source | `PolicyPhysicsLoop.step(at:)` |
 | Outputs `NaN` / huge velocities | Hinge angles outside limits, or actions not clipped | hinge limits, `action_scale` |
 | Walks fine zero-action but tips with command | Observation slice ordering bug | `demoObservations`, gravity sign |
+| H1 stands and sways but barely translates | H1 policy order is still USD file order, not PhysX BFS traversal | `IsaacPolicyRuntimeConfiguration.h1Flat.simToPolicyJointPermutation` |
+| Ankles move but no propulsion | Actions/observations reach ankles, but contact or policy order is wrong | ankle range checks, H1 permutation test, foot collision/friction |
+| H1 keeps height but barely translates | H1 is using a chain/regex action order instead of PhysX breadth-first policy order | `h1SimToPolicyPermutationMatchesFlatTerrainDofOrder()` |
+| H1 walks but feet look buried | Jolt contact slop or rounded foot box is too large for the 2.4 cm-thick H1 foot | H1 `BoxShape(..., 0.0f)`, `mPenetrationSlop`, `mSpeculativeContactDistance` |
+| Walks correctly but feet look slightly sunk into the ground | Renderer base pose is aligned to inertial COM instead of USD link origin | `IsaacSwiftAnymalSimulator.currentObservation().basePositionWorld`, `Renderer.applyPhysicsBasePose` |
 
 ---
 
-## 8. References
+## 9. References
 
 - Isaac Lab `LocomotionVelocityRoughEnv` — observation / reward layout.
 - [`IsaacSim/source/extensions/isaacsim.robot.policy.examples/.../spot.py`](../../IsaacSim/source/extensions/isaacsim.robot.policy.examples/isaacsim/robot/policy/examples/robots/spot.py)

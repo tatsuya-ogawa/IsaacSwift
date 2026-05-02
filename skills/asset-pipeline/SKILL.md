@@ -1,6 +1,6 @@
 ---
 name: isaacswift-asset-pipeline
-description: Use this skill when packaging, regenerating, validating, or debugging IsaacSwift robot USDZ assets from Isaac Sim robot asset sources, including ANYmal-C, Spot, and Unitree Go2.
+description: Use this skill when packaging, regenerating, validating, or debugging IsaacSwift robot USDZ assets from Isaac Sim robot asset sources, including ANYmal-C, Spot, Unitree Go2, and Unitree H1.
 ---
 
 # Asset Pipeline
@@ -21,6 +21,7 @@ Examples:
 
 - `isaac-sim-assets-robots_and_sensors-5.1.0/Assets/Isaac/5.1/Isaac/Robots/ANYbotics/anymal_c`
 - `isaac-sim-assets-robots_and_sensors-5.1.0/Assets/Isaac/5.1/Isaac/Robots/Unitree/Go2`
+- `isaac-sim-assets-robots_and_sensors-5.1.0/Assets/Isaac/5.1/Isaac/Robots/Unitree/H1`
 
 ## Output Location
 
@@ -33,6 +34,7 @@ Examples:
 - `IsaacSwift/RobotAssets/anymal_c/`
 - `IsaacSwift/RobotAssets/spot/`
 - `IsaacSwift/RobotAssets/go2/`
+- `IsaacSwift/RobotAssets/h1/`
 
 ## Required Files
 
@@ -88,6 +90,15 @@ make go2-usdz
 The package script builds `go2.usdz` from the Isaac Sim asset pack at `Unitree/Go2/`.
 Go2 does not ship image textures for its main materials. It uses `diffuse_color_constant` values in the USD, so the renderer must provide a solid-color fallback from the model definition.
 
+### H1
+
+```bash
+make h1-usdz
+```
+
+The package script builds `h1.usdz` from the Isaac Sim asset pack at `Unitree/H1/`.
+Keep the root `h1.usd` plus the payload files (`base.usda`, `physics*.usda`, `geometries.usd`, and hand payloads) together so the default `Physx_minimal` variant resolves correctly.
+
 ## Loader Assumptions
 
 The renderer/loader is expected to:
@@ -129,9 +140,11 @@ When adding or updating an asset, verify:
 - Compiled policy models should live in the app as:
   - `PolicyModels/spot_policy.mlmodelc`
   - `PolicyModels/anymal_policy.mlmodelc`
+  - `PolicyModels/h1_policy.mlmodelc`
 - Policy sources are fetched locally from NVIDIA into `isaac_policy_sources/`.
 - Build conversion tooling once with `make policy-tooling`.
 - Fetch published Spot and ANYmal sources with `make fetch-policies`.
-- Build both policy bundles with `make policy-model`.
+- Build all policy bundles with `make policy-model`.
 - Build only the ANYmal bundle with `make anymal-policy-model`.
+- Build only the H1 bundle with `make h1-policy-model`.
 - Go2 currently reuses the Spot policy as a temporary placeholder.

@@ -47,13 +47,15 @@ struct IsaacPolicyRuntimeConfiguration: Equatable {
     let policyDecimation: Int
     let actionScale: Float
     let defaultCommand: SIMD3<Float>
-    /// Permutation that maps the local Jolt simulator's leg-major joint
-    /// indices to the order the bundled policy was trained with. PhysX
-    /// `dof_names` for Spot are grouped by joint type
-    /// (`[fl_hx, fr_hx, hl_hx, hr_hx, fl_hy, …, fl_kn, …]`), so we have to
-    /// remap on the way in/out of the network. The bundled ANYmal-C CoreML
-    /// model uses the same type-grouped LF/RF/LH/RH policy order.
+    /// Permutation that maps local Jolt simulator joint indices to the order
+    /// the bundled policy was trained with. PhysX `dof_names` can differ from
+    /// USD file order: Spot/ANYmal policies use type-grouped leg joints, while
+    /// H1 uses a breadth-first traversal across pelvis, legs, torso, and arms.
     let simToPolicyJointPermutation: [Int]
+
+    var jointCount: Int {
+        simToPolicyJointPermutation.count
+    }
 
     var policyUpdateInterval: TimeInterval {
         physicsTimeStep * Double(policyDecimation)
@@ -133,6 +135,12 @@ struct PolicyModelConfiguration: Equatable {
                                                  outputFeatureName: "actions",
                                                  repositoryRelativePath: "PolicyModels/anymal_policy.mlmodelc")
 
+    static let h1 = PolicyModelConfiguration(resourceName: "h1_policy",
+                                             resourceExtension: "mlmodelc",
+                                             inputFeatureName: "observations",
+                                             outputFeatureName: "actions",
+                                             repositoryRelativePath: "PolicyModels/h1_policy.mlmodelc")
+
     static func configuration(for robotKind: IsaacSwiftRobotKind) -> PolicyModelConfiguration {
         robotKind.modelDefinition.policyModelConfiguration
     }
@@ -168,14 +176,16 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
     /// by joint type (`[*_hx, *_hy, *_kn]`) rather than leg-major. The Jolt
     /// simulator here is built leg-major, so the policy → sim direction may
     /// need a permutation to match the order the network was trained with.
-    /// Default is identity (no remap). Length must be 12.
+    /// Default is identity (no remap). Length is robot-specific.
     var simToPolicyJointPermutation: [Int] = Array(0..<12) {
-        didSet { precondition(simToPolicyJointPermutation.count == 12) }
+        didSet {
+            precondition(Set(simToPolicyJointPermutation).count == simToPolicyJointPermutation.count)
+        }
     }
 
     /// Inverse of `simToPolicyJointPermutation`. Computed lazily.
     private var policyToSimJointPermutation: [Int] {
-        var inv = Array(repeating: 0, count: 12)
+        var inv = Array(repeating: 0, count: simToPolicyJointPermutation.count)
         for (sim, policy) in simToPolicyJointPermutation.enumerated() {
             inv[policy] = sim
         }
@@ -187,7 +197,7 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
          command: SIMD3<Float>? = nil) {
         self.configuration = configuration
         self.runner = runner
-        let zeroActions = Array(repeating: Float(0), count: 12)
+        let zeroActions = Array(repeating: Float(0), count: configuration.jointCount)
         self.feedbackState = FeedbackState(jointPositionDeltas: zeroActions,
                                            jointVelocities: zeroActions,
                                            previousRawActions: zeroActions,
@@ -195,9 +205,7 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
                                            lastFeedbackTime: nil,
                                            velocityCommand: command ?? configuration.defaultCommand)
         self.policyUpdateScheduler = PolicyUpdateScheduler(updateInterval: configuration.policyUpdateInterval)
-        if configuration.simToPolicyJointPermutation.count == 12 {
-            self.simToPolicyJointPermutation = configuration.simToPolicyJointPermutation
-        }
+        self.simToPolicyJointPermutation = configuration.simToPolicyJointPermutation
     }
 
     /// Push body-frame base state into the policy observation. Should be
@@ -218,15 +226,16 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
     /// joint order; the provider remaps it to the policy's joint order
     /// internally so the network sees the order it was trained with.
     func updateJointState(positionDeltas: [Float], velocities: [Float]) {
-        let posSim = Array(positionDeltas.prefix(12))
-        let velSim = Array(velocities.prefix(12))
+        let jointCount = configuration.jointCount
+        let posSim = Array(positionDeltas.prefix(jointCount))
+        let velSim = Array(velocities.prefix(jointCount))
         let perm = simToPolicyJointPermutation
-        var posPolicy = Array(repeating: Float(0), count: 12)
-        var velPolicy = Array(repeating: Float(0), count: 12)
-        for (simIdx, value) in posSim.enumerated() where simIdx < 12 {
+        var posPolicy = Array(repeating: Float(0), count: jointCount)
+        var velPolicy = Array(repeating: Float(0), count: jointCount)
+        for (simIdx, value) in posSim.enumerated() where simIdx < jointCount {
             posPolicy[perm[simIdx]] = value
         }
-        for (simIdx, value) in velSim.enumerated() where simIdx < 12 {
+        for (simIdx, value) in velSim.enumerated() where simIdx < jointCount {
             velPolicy[perm[simIdx]] = value
         }
         lock.lock()
@@ -262,10 +271,14 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
         // applies them in sim joint order, so permute on the way out. The
         // policy-order copy is kept as `previousRawActions` because that is
         // what the next observation's `previous_action` slot expects.
-        let policyActions = Array(actions.prefix(12))
+        let jointCount = configuration.jointCount
+        var policyActions = Array(repeating: Float(0), count: jointCount)
+        for (idx, value) in actions.prefix(jointCount).enumerated() {
+            policyActions[idx] = value
+        }
         let permPolicyToSim = policyToSimJointPermutation
-        var simActions = Array(repeating: Float(0), count: 12)
-        for (policyIdx, value) in policyActions.enumerated() where policyIdx < 12 {
+        var simActions = Array(repeating: Float(0), count: jointCount)
+        for (policyIdx, value) in policyActions.enumerated() where policyIdx < jointCount {
             simActions[permPolicyToSim[policyIdx]] = value
         }
 
@@ -279,7 +292,7 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
     func resetPolicyState() {
         lock.lock()
         let command = feedbackState.velocityCommand
-        let zero = Array(repeating: Float(0), count: 12)
+        let zero = Array(repeating: Float(0), count: configuration.jointCount)
         feedbackState = FeedbackState(jointPositionDeltas: zero,
                                       jointVelocities: zero,
                                       previousRawActions: zero,
@@ -291,8 +304,9 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
     }
 
     func updateJointFeedback(_ jointPositions: [Float], at time: TimeInterval) {
-        let limitedPositions = Array(jointPositions.prefix(12))
-        guard limitedPositions.count == 12 else {
+        let jointCount = configuration.jointCount
+        let limitedPositions = Array(jointPositions.prefix(jointCount))
+        guard limitedPositions.count == jointCount else {
             return
         }
 
@@ -338,9 +352,9 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
         //   [3:6]   base_ang_vel_b
         //   [6:9]   projected_gravity_b
         //   [9:12]  velocity_command (vx, vy, wz)
-        //   [12:24] joint_pos - default_joint_pos
-        //   [24:36] joint_vel
-        //   [36:48] previous raw actions
+        //   [12:12+N] joint_pos - default_joint_pos
+        //   [12+N:12+2N] joint_vel
+        //   [12+2N:12+3N] previous raw actions
         func write(_ value: SIMD3<Float>, at offset: Int) {
             if observations.count > offset + 0 { observations[offset + 0] = value.x }
             if observations.count > offset + 1 { observations[offset + 1] = value.y }
@@ -351,22 +365,26 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
         write(feedbackState.projectedGravityBody, at: 6)
         write(feedbackState.velocityCommand, at: 9)
 
+        let jointCount = configuration.jointCount
+        let jointPositionOffset = 12
+        let jointVelocityOffset = jointPositionOffset + jointCount
+        let previousActionOffset = jointVelocityOffset + jointCount
         let jointPositionCount = Swift.min(feedbackState.jointPositionDeltas.count,
-                                           Swift.min(max(observations.count - 12, 0), 12))
+                                           Swift.min(max(observations.count - jointPositionOffset, 0), jointCount))
         for index in 0..<jointPositionCount {
-            observations[12 + index] = feedbackState.jointPositionDeltas[index]
+            observations[jointPositionOffset + index] = feedbackState.jointPositionDeltas[index]
         }
 
         let jointVelocityCount = Swift.min(feedbackState.jointVelocities.count,
-                                           Swift.min(max(observations.count - 24, 0), 12))
+                                           Swift.min(max(observations.count - jointVelocityOffset, 0), jointCount))
         for index in 0..<jointVelocityCount {
-            observations[24 + index] = feedbackState.jointVelocities[index]
+            observations[jointVelocityOffset + index] = feedbackState.jointVelocities[index]
         }
 
         let previousActionCount = Swift.min(feedbackState.previousRawActions.count,
-                                            Swift.min(max(observations.count - 36, 0), 12))
+                                            Swift.min(max(observations.count - previousActionOffset, 0), jointCount))
         for index in 0..<previousActionCount {
-            observations[36 + index] = feedbackState.previousRawActions[index]
+            observations[previousActionOffset + index] = feedbackState.previousRawActions[index]
         }
 
         return observations

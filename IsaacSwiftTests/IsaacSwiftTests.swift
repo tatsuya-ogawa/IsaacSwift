@@ -16,8 +16,16 @@ import simd
 struct IsaacSwiftTests {
     private struct TextureResolutionSummary {
         let submeshCount: Int
-        let resolvedCounts: [BaseColorTextureSource: Int]
+        let textureSamplerCount: Int
+        let urlCount: Int
+        let stringCount: Int
+        let solidColorCount: Int
+        let fallbackCount: Int
         let resolvedTextureNames: Set<String>
+
+        var texturedResolutionCount: Int {
+            textureSamplerCount + urlCount + stringCount
+        }
     }
 
     @Test func resolvesANYmalBaseColorTexturesFromUSDZ() throws {
@@ -33,8 +41,8 @@ struct IsaacSwiftTests {
 
         #expect(packagedSummary.submeshCount > 0)
         #expect(extractedSummary.submeshCount > 0)
-        #expect(texturedResolutionCount(in: extractedSummary.resolvedCounts) > 0)
-        #expect(texturedResolutionCount(in: extractedSummary.resolvedCounts) > texturedResolutionCount(in: packagedSummary.resolvedCounts))
+        #expect(extractedSummary.texturedResolutionCount > 0)
+        #expect(extractedSummary.texturedResolutionCount > packagedSummary.texturedResolutionCount)
         #expect(extractedSummary.resolvedTextureNames.contains("base.jpg"))
         #expect(extractedSummary.resolvedTextureNames.contains("drive.jpg"))
         #expect(extractedSummary.resolvedTextureNames.contains("hip.jpg"))
@@ -51,7 +59,7 @@ struct IsaacSwiftTests {
         let extractedSummary = try makeTextureResolutionSummary(for: extractedAssetURL)
 
         #expect(extractedSummary.submeshCount > 0)
-        #expect(texturedResolutionCount(in: extractedSummary.resolvedCounts) > 0)
+        #expect(extractedSummary.texturedResolutionCount > 0)
         #expect(extractedSummary.resolvedTextureNames.contains("yellow_parts.png"))
         #expect(extractedSummary.resolvedTextureNames.contains("body_others.png"))
         #expect(extractedSummary.resolvedTextureNames.contains("yellow_leg.png"))
@@ -65,8 +73,18 @@ struct IsaacSwiftTests {
                                                        solidColorByNodePath: IsaacSwiftRobotKind.go2.modelDefinition.solidColorByNodePath)
 
         #expect(summary.submeshCount > 0)
-        #expect(summary.resolvedCounts[.fallback, default: 0] == 0)
-        #expect(summary.resolvedCounts[.solidColor, default: 0] > 0)
+        #expect(summary.fallbackCount == 0)
+        #expect(summary.solidColorCount > 0)
+    }
+
+    @Test func resolvesH1USDMaterialColorsFromUSDZ() throws {
+        let assetURL = try Renderer.preparedLoadingAssetURL(from: h1USDZURL())
+        let summary = try makeTextureResolutionSummary(for: assetURL,
+                                                       solidColorByNodePath: IsaacSwiftRobotKind.H1.modelDefinition.solidColorByNodePath)
+
+        #expect(summary.submeshCount > 0)
+        #expect(summary.fallbackCount == 0)
+        #expect(summary.solidColorCount > 0)
     }
 
     @Test func resolvesGo2ArticulationFromUSDZ() throws {
@@ -106,28 +124,74 @@ struct IsaacSwiftTests {
         #expect(matricesApproximatelyEqual(zeroTransforms[frThighIndex], activeTransforms[frThighIndex]))
     }
 
+    @Test func resolvesH1ArticulationFromUSDZ() throws {
+        let assetURL = try Renderer.preparedLoadingAssetURL(from: h1USDZURL())
+        let profile = Renderer.articulationProfile(for: .H1)
+        let sceneNodes = Renderer.sceneNodes(from: assetURL, profile: profile)
+        #expect(!sceneNodes.isEmpty)
+
+        let zeroActions = Array(repeating: Float(0), count: 19)
+        var activeActions = zeroActions
+        activeActions[4] = 0.4
+
+        let zeroTransforms = Renderer.worldTransforms(for: sceneNodes,
+                                                      actions: zeroActions,
+                                                      profile: profile)
+        let activeTransforms = Renderer.worldTransforms(for: sceneNodes,
+                                                        actions: activeActions,
+                                                        profile: profile)
+        #expect(zeroTransforms.count == sceneNodes.count)
+        #expect(activeTransforms.count == sceneNodes.count)
+
+        guard let pelvisIndex = sceneNodes.firstIndex(where: { $0.path == "/h1/pelvis" }),
+              let leftHipYawIndex = sceneNodes.firstIndex(where: { $0.path == "/h1/left_hip_yaw_link" }),
+              let leftHipPitchIndex = sceneNodes.firstIndex(where: { $0.path == "/h1/left_hip_pitch_link" }),
+              let leftKneeIndex = sceneNodes.firstIndex(where: { $0.path == "/h1/left_knee_link" }),
+              let rightHipPitchIndex = sceneNodes.firstIndex(where: { $0.path == "/h1/right_hip_pitch_link" }) else {
+            Issue.record("H1 joint nodes were not found in the asset hierarchy.")
+            return
+        }
+
+        #expect(sceneNodes[leftHipYawIndex].parentIndex == pelvisIndex)
+        #expect(sceneNodes[leftHipPitchIndex].parentIndex.flatMap { sceneNodes[$0].path } == "/h1/left_hip_roll_link")
+        #expect(sceneNodes[leftKneeIndex].parentIndex.flatMap { sceneNodes[$0].path } == "/h1/left_hip_pitch_link")
+
+        #expect(!matricesApproximatelyEqual(zeroTransforms[leftHipPitchIndex], activeTransforms[leftHipPitchIndex]))
+        #expect(!matricesApproximatelyEqual(zeroTransforms[leftKneeIndex], activeTransforms[leftKneeIndex]))
+        #expect(matricesApproximatelyEqual(zeroTransforms[rightHipPitchIndex], activeTransforms[rightHipPitchIndex]))
+    }
+
     @Test func loadsPolicyModelAndRunsInference() throws {
         let spotConfiguration = PolicyModelConfiguration.spot
         let anymalConfiguration = PolicyModelConfiguration.anymal
+        let h1Configuration = PolicyModelConfiguration.h1
         let bundledSpotURL = PolicyModelRunner.bundledModelURL(configuration: spotConfiguration)
         let bundledAnymalURL = PolicyModelRunner.bundledModelURL(configuration: anymalConfiguration)
+        let bundledH1URL = PolicyModelRunner.bundledModelURL(configuration: h1Configuration)
         let repositorySpotURL = PolicyModelRunner.repositoryModelURL(configuration: spotConfiguration)
         let repositoryAnymalURL = PolicyModelRunner.repositoryModelURL(configuration: anymalConfiguration)
+        let repositoryH1URL = PolicyModelRunner.repositoryModelURL(configuration: h1Configuration)
 
         #expect(bundledSpotURL != nil || repositorySpotURL.map { FileManager.default.fileExists(atPath: $0.path) } == true)
         #expect(bundledAnymalURL != nil || repositoryAnymalURL.map { FileManager.default.fileExists(atPath: $0.path) } == true)
+        #expect(bundledH1URL != nil || repositoryH1URL.map { FileManager.default.fileExists(atPath: $0.path) } == true)
 
         let spotRunner = try PolicyModelRunner(configuration: spotConfiguration)
         let anymalRunner = try PolicyModelRunner(configuration: anymalConfiguration)
+        let h1Runner = try PolicyModelRunner(configuration: h1Configuration)
         #expect(spotRunner.observationCount == 48)
         #expect(anymalRunner.observationCount == 48)
+        #expect(h1Runner.observationCount == 69)
 
         let spotActions = try spotRunner.predictActions(observations: spotRunner.zeroObservations())
         let anymalActions = try anymalRunner.predictActions(observations: anymalRunner.zeroObservations())
+        let h1Actions = try h1Runner.predictActions(observations: h1Runner.zeroObservations())
         #expect(!spotActions.isEmpty)
         #expect(!anymalActions.isEmpty)
+        #expect(h1Actions.count == 19)
         #expect(spotActions.reduce(true) { $0 && $1.isFinite })
         #expect(anymalActions.reduce(true) { $0 && $1.isFinite })
+        #expect(h1Actions.reduce(true) { $0 && $1.isFinite })
 
         let actionProvider = DemoPolicyActionProvider(runner: spotRunner)
         let demoActionsA = actionProvider.currentActions(at: 0)
@@ -154,9 +218,11 @@ struct IsaacSwiftTests {
         #expect(abs(IsaacPolicyRuntimeConfiguration.anymalC.physicsTimeStep - 0.005) <= 1e-8)
         #expect(abs(IsaacPolicyRuntimeConfiguration.spotFlat.physicsTimeStep - 0.002) <= 1e-8)
         #expect(abs(IsaacPolicyRuntimeConfiguration.go2.physicsTimeStep - 0.005) <= 1e-8)
+        #expect(abs(IsaacPolicyRuntimeConfiguration.h1Flat.physicsTimeStep - 0.005) <= 1e-8)
         #expect(IsaacPolicyRuntimeConfiguration.anymalC.policyDecimation == 4)
         #expect(IsaacPolicyRuntimeConfiguration.spotFlat.policyDecimation == 10)
         #expect(IsaacPolicyRuntimeConfiguration.go2.policyDecimation == 4)
+        #expect(IsaacPolicyRuntimeConfiguration.h1Flat.policyDecimation == 4)
         #expect(abs(DemoPolicyActionProvider.isaacPolicyUpdateInterval - 0.02) <= 1e-8)
 
         var scheduler = PolicyUpdateScheduler(updateInterval: DemoPolicyActionProvider.isaacPolicyUpdateInterval)
@@ -226,17 +292,26 @@ struct IsaacSwiftTests {
         #expect(abs(go2Sim.physicsTimeStep - go2Config.physicsTimeStep) <= 1e-8)
         #expect(abs(go2Sim.recommendedPhysicsTimeStep - go2Config.physicsTimeStep) <= 1e-8)
         #expect(abs(go2Sim.recommendedActionScale - go2Config.actionScale) <= 1e-6)
+
+        let h1Config = IsaacPolicyRuntimeConfiguration.h1Flat
+        let h1Sim = IsaacSwiftAnymalSimulator(robotKind: h1Config.robotKind,
+                                             physicsTimeStep: h1Config.physicsTimeStep)
+        #expect(abs(h1Sim.physicsTimeStep - h1Config.physicsTimeStep) <= 1e-8)
+        #expect(abs(h1Sim.recommendedPhysicsTimeStep - h1Config.physicsTimeStep) <= 1e-8)
+        #expect(abs(h1Sim.recommendedActionScale - h1Config.actionScale) <= 1e-6)
+        #expect(h1Sim.jointCount == 19)
     }
 
     @Test func simToPolicyJointPermutationsAreValidBijections() {
-        // Every runtime config must define a 12-element permutation that is
-        // a bijection over {0..<12}. This guards against typos in the
+        // Every runtime config must define a robot-sized permutation that is
+        // a bijection over {0..<N}. This guards against typos in the
         // sim-order ↔ policy-order mapping that would otherwise let actions
         // bleed between legs (the original Spot regression).
         for config in RobotModelDefinitions.all.map(\.policyRuntimeConfiguration) {
             let perm = config.simToPolicyJointPermutation
-            #expect(perm.count == 12, "perm count for \(config.robotKind) is \(perm.count)")
-            #expect(Set(perm) == Set(0..<12),
+            #expect(perm.count == config.robotKind.modelDefinition.articulationProfile.policyJointBindings.count,
+                    "perm count for \(config.robotKind) is \(perm.count)")
+            #expect(Set(perm) == Set(0..<perm.count),
                     "perm for \(config.robotKind) is not a bijection: \(perm)")
         }
     }
@@ -285,6 +360,30 @@ struct IsaacSwiftTests {
         let actual = IsaacPolicyRuntimeConfiguration.go2.simToPolicyJointPermutation
         #expect(actual == expected,
                 "Go2 sim->policy permutation drifted: got \(actual)")
+    }
+
+    @Test func h1SimToPolicyPermutationMatchesFlatTerrainDofOrder() {
+        // Sim follows the USD file's revolute-joint declaration order:
+        //   [left_hip_yaw, right_hip_yaw, torso,
+        //    left_hip_roll, left_hip_pitch, left_knee, left_ankle,
+        //    right_hip_roll, right_hip_pitch, right_knee, right_ankle,
+        //    left_shoulder_pitch, right_shoulder_pitch,
+        //    left_shoulder_roll, left_shoulder_yaw, left_elbow,
+        //    right_shoulder_roll, right_shoulder_yaw, right_elbow]
+        // Isaac Sim's H1 policy consumes PhysX traversal order:
+        //   [left_hip_yaw, right_hip_yaw, torso,
+        //    left_hip_roll, right_hip_roll,
+        //    left_shoulder_pitch, right_shoulder_pitch,
+        //    left_hip_pitch, right_hip_pitch,
+        //    left_shoulder_roll, right_shoulder_roll,
+        //    left_knee, right_knee,
+        //    left_shoulder_yaw, right_shoulder_yaw,
+        //    left_ankle, right_ankle,
+        //    left_elbow, right_elbow]
+        let expected = [0, 1, 2, 3, 7, 11, 15, 4, 8, 12, 16, 5, 6, 9, 13, 17, 10, 14, 18]
+        let actual = IsaacPolicyRuntimeConfiguration.h1Flat.simToPolicyJointPermutation
+        #expect(actual == expected,
+                "H1 sim->policy permutation drifted: got \(actual)")
     }
 
     @Test func visualizedPolicyActionsUseIsaacActionScale() {
@@ -411,6 +510,17 @@ struct IsaacSwiftTests {
             .appendingPathComponent("IsaacSwift/RobotAssets/go2/go2.usdz")
     }
 
+    private func h1USDZURL() -> URL {
+        if let bundledURL = Bundle.main.url(forResource: "h1", withExtension: "usdz") {
+            return bundledURL
+        }
+
+        return URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("IsaacSwift/RobotAssets/h1/h1.usdz")
+    }
+
     private func makeDefaultTexture(device: MTLDevice) throws -> MTLTexture {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm,
                                                                   width: 1,
@@ -441,7 +551,11 @@ struct IsaacSwiftTests {
         guard let device = MTLCreateSystemDefaultDevice() else {
             Issue.record("Metal device is not available for texture resolution test.")
             return TextureResolutionSummary(submeshCount: 0,
-                                            resolvedCounts: [:],
+                                            textureSamplerCount: 0,
+                                            urlCount: 0,
+                                            stringCount: 0,
+                                            solidColorCount: 0,
+                                            fallbackCount: 0,
                                             resolvedTextureNames: [])
         }
 
@@ -454,7 +568,11 @@ struct IsaacSwiftTests {
                                              solidColorByNodePath: solidColorByNodePath)
 
         var submeshCount = 0
-        var resolvedCounts: [BaseColorTextureSource: Int] = [:]
+        var textureSamplerCount = 0
+        var urlCount = 0
+        var stringCount = 0
+        var solidColorCount = 0
+        var fallbackCount = 0
         var resolvedTextureNames: Set<String> = []
 
         func walk(_ object: MDLObject,
@@ -471,12 +589,19 @@ struct IsaacSwiftTests {
                     let resolution = Renderer.resolveBaseColorTexture(from: submesh.material,
                                                                       nodePath: nodePath,
                                                                       context: context)
-                    resolvedCounts[resolution.source, default: 0] += 1
                     switch resolution.source {
-                    case .url(let url), .string(let url):
+                    case .textureSampler:
+                        textureSamplerCount += 1
+                    case .url(let url):
+                        urlCount += 1
                         resolvedTextureNames.insert(url.lastPathComponent.lowercased())
-                    case .textureSampler, .solidColor, .fallback:
-                        break
+                    case .string(let url):
+                        stringCount += 1
+                        resolvedTextureNames.insert(url.lastPathComponent.lowercased())
+                    case .solidColor:
+                        solidColorCount += 1
+                    case .fallback:
+                        fallbackCount += 1
                     }
                 }
             }
@@ -495,19 +620,12 @@ struct IsaacSwiftTests {
         }
 
         return TextureResolutionSummary(submeshCount: submeshCount,
-                                        resolvedCounts: resolvedCounts,
+                                        textureSamplerCount: textureSamplerCount,
+                                        urlCount: urlCount,
+                                        stringCount: stringCount,
+                                        solidColorCount: solidColorCount,
+                                        fallbackCount: fallbackCount,
                                         resolvedTextureNames: resolvedTextureNames)
-    }
-
-    private func texturedResolutionCount(in counts: [BaseColorTextureSource: Int]) -> Int {
-        counts.reduce(0) { partial, entry in
-            switch entry.key {
-            case .textureSampler, .url, .string:
-                return partial + entry.value
-            case .solidColor, .fallback:
-                return partial
-            }
-        }
     }
 
     private func textureRelativePathsByMaterialName(for assetURL: URL) -> [String: [String]] {

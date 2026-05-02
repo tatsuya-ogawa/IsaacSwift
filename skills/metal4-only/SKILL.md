@@ -19,6 +19,12 @@ This repository is `Metal 4 only`.
 - If an existing file reflects older Metal template code, treat it as migration material, not as the target architecture.
 - If a choice is unclear, resolve it in favor of a stricter `Metal 4` design.
 
+## Build and signing
+
+- Verify builds with `./scripts/build-device.sh` or `./scripts/agent-ci.sh`; do not switch to `iphonesimulator` or `My Mac (Designed for iPad)` as a workaround.
+- GitHub-visible project settings intentionally omit local signing configuration. If a device build fails with signing, provisioning, team, or account errors, ask the user to configure local Xcode signing/development-team settings or provide local signing overrides, then rerun the same device build command.
+- Treat signing errors as environment setup issues, not renderer or Metal API failures.
+
 ## When writing docs
 
 - State clearly that the app is built for `Metal 4`.

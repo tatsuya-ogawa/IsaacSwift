@@ -52,6 +52,7 @@ enum RobotModelDefinitions {
         anymalC,
         spot,
         go2,
+        h1,
     ]
 
     static var selectable: [RobotModelDefinition] {
@@ -81,6 +82,11 @@ enum RobotModelDefinitions {
                                                       subdirectory: "RobotAssets/go2",
                                                       robotKind: .go2)
 
+    private static let h1Asset = RobotAssetCandidate(resourceName: "h1",
+                                                     resourceExtension: "usdz",
+                                                     subdirectory: "RobotAssets/h1",
+                                                     robotKind: .H1)
+
     private static let anymalC = RobotModelDefinition(kind: .anymalC,
                                                       displayName: "ANYmal-C",
                                                       pickerLabel: "ANYmal",
@@ -108,6 +114,16 @@ enum RobotModelDefinitions {
                                                   policyRuntimeConfiguration: .go2,
                                                   articulationProfile: go2ArticulationProfile,
                                                   solidColorByNodePath: go2SolidColorByNodePath)
+
+    private static let h1 = RobotModelDefinition(kind: .H1,
+                                                 displayName: "H1",
+                                                 pickerLabel: "H1",
+                                                 assetCandidate: h1Asset,
+                                                 fallbackAssetCandidates: [],
+                                                 policyModelConfiguration: .h1,
+                                                 policyRuntimeConfiguration: .h1Flat,
+                                                 articulationProfile: h1ArticulationProfile,
+                                                 solidColorByNodePath: h1SolidColorByNodePath)
 }
 
 extension IsaacSwiftRobotKind {
@@ -155,6 +171,20 @@ extension IsaacPolicyRuntimeConfiguration {
                                                          2, 8, 9,    // RL
                                                          3, 10, 11,  // RR
                                                      ])
+
+    static let h1Flat = IsaacPolicyRuntimeConfiguration(robotKind: .H1,
+                                                        physicsTimeStep: 1.0 / 200.0,
+                                                        policyDecimation: 4,
+                                                        actionScale: 0.5,
+                                                        defaultCommand: SIMD3<Float>(1.0, 0, 0),
+                                                        simToPolicyJointPermutation: [
+                                                            0, 1, 2,      // pelvis children: left/right hip yaw, torso
+                                                            3, 7, 11, 15, // second traversal depth
+                                                            4, 8, 12, 16, // third traversal depth
+                                                            5, 6,         // knees/ankles on the left leg chain
+                                                            9, 13, 17,    // right knee + left/right shoulder roll depth
+                                                            10, 14, 18,   // right ankle + left/right arm terminal depth
+                                                        ])
 
     static func configuration(for robotKind: IsaacSwiftRobotKind) -> IsaacPolicyRuntimeConfiguration {
         robotKind.modelDefinition.policyRuntimeConfiguration
@@ -460,6 +490,271 @@ private let go2ArticulationProfile = RobotArticulationProfile(
     policyJointBindings: go2PolicyJointBindings,
     articulationParents: go2ArticulationParents,
     transformOverrides: go2ArticulationTransformOverrides)
+
+private struct H1JointSpec {
+    let name: String
+    let parent: String
+    let child: String
+    let localPos0: SIMD3<Float>
+    let localRot0: simd_quatf
+    let jointAxis: SIMD3<Float>
+    let restAngle: Float
+}
+
+private let h1IdentityQuat = usdQuaternion(real: 1, ix: 0, iy: 0, iz: 0)
+private let h1X = SIMD3<Float>(1, 0, 0)
+private let h1Y = SIMD3<Float>(0, 1, 0)
+private let h1Z = SIMD3<Float>(0, 0, 1)
+
+private let h1JointSpecs: [H1JointSpec] = [
+    H1JointSpec(name: "left_hip_yaw",
+                parent: "pelvis",
+                child: "left_hip_yaw_link",
+                localPos0: SIMD3<Float>(0, 0.0875, -0.1742),
+                localRot0: h1IdentityQuat,
+                jointAxis: h1Z,
+                restAngle: 0),
+    H1JointSpec(name: "right_hip_yaw",
+                parent: "pelvis",
+                child: "right_hip_yaw_link",
+                localPos0: SIMD3<Float>(0, -0.0875, -0.1742),
+                localRot0: h1IdentityQuat,
+                jointAxis: h1Z,
+                restAngle: 0),
+    H1JointSpec(name: "torso",
+                parent: "pelvis",
+                child: "torso_link",
+                localPos0: .zero,
+                localRot0: h1IdentityQuat,
+                jointAxis: h1Z,
+                restAngle: 0),
+    H1JointSpec(name: "left_hip_roll",
+                parent: "left_hip_yaw_link",
+                child: "left_hip_roll_link",
+                localPos0: SIMD3<Float>(0.039468, 0, 0),
+                localRot0: h1IdentityQuat,
+                jointAxis: h1X,
+                restAngle: 0),
+    H1JointSpec(name: "left_hip_pitch",
+                parent: "left_hip_roll_link",
+                child: "left_hip_pitch_link",
+                localPos0: SIMD3<Float>(0, 0.11536, 0),
+                localRot0: h1IdentityQuat,
+                jointAxis: h1Y,
+                restAngle: -0.28),
+    H1JointSpec(name: "left_knee",
+                parent: "left_hip_pitch_link",
+                child: "left_knee_link",
+                localPos0: SIMD3<Float>(0, 0, -0.4),
+                localRot0: h1IdentityQuat,
+                jointAxis: h1Y,
+                restAngle: 0.79),
+    H1JointSpec(name: "left_ankle",
+                parent: "left_knee_link",
+                child: "left_ankle_link",
+                localPos0: SIMD3<Float>(0, 0, -0.4),
+                localRot0: h1IdentityQuat,
+                jointAxis: h1Y,
+                restAngle: -0.52),
+    H1JointSpec(name: "right_hip_roll",
+                parent: "right_hip_yaw_link",
+                child: "right_hip_roll_link",
+                localPos0: SIMD3<Float>(0.039468, 0, 0),
+                localRot0: h1IdentityQuat,
+                jointAxis: h1X,
+                restAngle: 0),
+    H1JointSpec(name: "right_hip_pitch",
+                parent: "right_hip_roll_link",
+                child: "right_hip_pitch_link",
+                localPos0: SIMD3<Float>(0, -0.11536, 0),
+                localRot0: h1IdentityQuat,
+                jointAxis: h1Y,
+                restAngle: -0.28),
+    H1JointSpec(name: "right_knee",
+                parent: "right_hip_pitch_link",
+                child: "right_knee_link",
+                localPos0: SIMD3<Float>(0, 0, -0.4),
+                localRot0: h1IdentityQuat,
+                jointAxis: h1Y,
+                restAngle: 0.79),
+    H1JointSpec(name: "right_ankle",
+                parent: "right_knee_link",
+                child: "right_ankle_link",
+                localPos0: SIMD3<Float>(0, 0, -0.4),
+                localRot0: h1IdentityQuat,
+                jointAxis: h1Y,
+                restAngle: -0.52),
+    H1JointSpec(name: "left_shoulder_pitch",
+                parent: "torso_link",
+                child: "left_shoulder_pitch_link",
+                localPos0: SIMD3<Float>(0.0055, 0.15535, 0.42999),
+                localRot0: usdQuaternion(real: 0.97629625, ix: 0.21643849, iy: 0, iz: 0),
+                jointAxis: h1Y,
+                restAngle: 0.28),
+    H1JointSpec(name: "right_shoulder_pitch",
+                parent: "torso_link",
+                child: "right_shoulder_pitch_link",
+                localPos0: SIMD3<Float>(0.0055, -0.15535, 0.42999),
+                localRot0: usdQuaternion(real: 0.97629625, ix: -0.21643849, iy: 0, iz: 0),
+                jointAxis: h1Y,
+                restAngle: 0.28),
+    H1JointSpec(name: "left_shoulder_roll",
+                parent: "left_shoulder_pitch_link",
+                child: "left_shoulder_roll_link",
+                localPos0: SIMD3<Float>(-0.0055, 0.0565, -0.0165),
+                localRot0: usdQuaternion(real: 0.97629625, ix: -0.21643849, iy: 0, iz: 0),
+                jointAxis: h1X,
+                restAngle: 0),
+    H1JointSpec(name: "left_shoulder_yaw",
+                parent: "left_shoulder_roll_link",
+                child: "left_shoulder_yaw_link",
+                localPos0: SIMD3<Float>(0, 0, -0.1343),
+                localRot0: h1IdentityQuat,
+                jointAxis: h1Z,
+                restAngle: 0),
+    H1JointSpec(name: "left_elbow",
+                parent: "left_shoulder_yaw_link",
+                child: "left_elbow_link",
+                localPos0: SIMD3<Float>(0.0185, 0, -0.198),
+                localRot0: h1IdentityQuat,
+                jointAxis: h1Y,
+                restAngle: 0.52),
+    H1JointSpec(name: "right_shoulder_roll",
+                parent: "right_shoulder_pitch_link",
+                child: "right_shoulder_roll_link",
+                localPos0: SIMD3<Float>(-0.0055, -0.0565, -0.0165),
+                localRot0: usdQuaternion(real: 0.97629625, ix: 0.21643849, iy: 0, iz: 0),
+                jointAxis: h1X,
+                restAngle: 0),
+    H1JointSpec(name: "right_shoulder_yaw",
+                parent: "right_shoulder_roll_link",
+                child: "right_shoulder_yaw_link",
+                localPos0: SIMD3<Float>(0, 0, -0.1343),
+                localRot0: h1IdentityQuat,
+                jointAxis: h1Z,
+                restAngle: 0),
+    H1JointSpec(name: "right_elbow",
+                parent: "right_shoulder_yaw_link",
+                child: "right_elbow_link",
+                localPos0: SIMD3<Float>(0.0185, 0, -0.198),
+                localRot0: h1IdentityQuat,
+                jointAxis: h1Y,
+                restAngle: 0.52),
+]
+
+private let h1PolicyJointBindings: [JointActionBinding] = h1JointSpecs.enumerated().map { index, spec in
+    JointActionBinding(nodePath: "/h1/\(spec.child)", actionIndex: index)
+}
+
+private let h1ArticulationParents: [String: String] = {
+    var parents = Dictionary(uniqueKeysWithValues: h1JointSpecs.map { spec in
+        ("/h1/\(spec.child)", "/h1/\(spec.parent)")
+    })
+    parents["/h1/d435_left_imager_link"] = "/h1/torso_link"
+    parents["/h1/d435_rgb_module_link"] = "/h1/torso_link"
+    parents["/h1/imu_link"] = "/h1/torso_link"
+    parents["/h1/logo_link"] = "/h1/torso_link"
+    parents["/h1/mid360_link"] = "/h1/torso_link"
+    return parents
+}()
+
+private let h1ArticulationTransformOverrides: [ArticulationTransformOverride] = {
+    var overrides = h1JointSpecs.map { spec in
+        ArticulationTransformOverride(childPath: "/h1/\(spec.child)",
+                                      parentPath: "/h1/\(spec.parent)",
+                                      localPos0: spec.localPos0,
+                                      localRot0: spec.localRot0,
+                                      localPos1: .zero,
+                                      localRot1: h1IdentityQuat,
+                                      jointAxis: spec.jointAxis,
+                                      restAngleOffset: spec.restAngle)
+    }
+    overrides.append(contentsOf: [
+        ArticulationTransformOverride(childPath: "/h1/d435_left_imager_link",
+                                      parentPath: "/h1/torso_link",
+                                      localPos0: SIMD3<Float>(0.108484745, 0.0175, 0.6931711),
+                                      localRot0: usdQuaternion(real: -0.3032806, ix: -0.3032783, iy: 0.63876617, iz: -0.6387651),
+                                      localPos1: .zero,
+                                      localRot1: usdQuaternion(real: 0.70710677, ix: 0, iy: 0.70710677, iz: 0)),
+        ArticulationTransformOverride(childPath: "/h1/d435_rgb_module_link",
+                                      parentPath: "/h1/torso_link",
+                                      localPos0: SIMD3<Float>(0.108484745, 0.0325, 0.6931711),
+                                      localRot0: usdQuaternion(real: -0.3032806, ix: -0.3032783, iy: 0.63876617, iz: -0.6387651),
+                                      localPos1: .zero,
+                                      localRot1: usdQuaternion(real: 0.70710677, ix: 0, iy: 0.70710677, iz: 0)),
+        ArticulationTransformOverride(childPath: "/h1/imu_link",
+                                      parentPath: "/h1/torso_link",
+                                      localPos0: SIMD3<Float>(-0.04452, -0.01891, 0.27756),
+                                      localRot0: h1IdentityQuat,
+                                      localPos1: .zero,
+                                      localRot1: h1IdentityQuat),
+        ArticulationTransformOverride(childPath: "/h1/logo_link",
+                                      parentPath: "/h1/torso_link",
+                                      localPos0: .zero,
+                                      localRot0: usdQuaternion(real: 0.70710677, ix: 0, iy: 0.70710677, iz: 0),
+                                      localPos1: .zero,
+                                      localRot1: usdQuaternion(real: 0.70710677, ix: 0, iy: 0.70710677, iz: 0)),
+        ArticulationTransformOverride(childPath: "/h1/mid360_link",
+                                      parentPath: "/h1/torso_link",
+                                      localPos0: SIMD3<Float>(0.047299903, 0, 0.6749288),
+                                      localRot0: usdQuaternion(real: 0.61614287, ix: 0, iy: 0.7876344, iz: 0),
+                                      localPos1: .zero,
+                                      localRot1: usdQuaternion(real: 0.70710677, ix: 0, iy: 0.70710677, iz: 0)),
+    ])
+    return overrides
+}()
+
+private let h1ArticulationProfile = RobotArticulationProfile(
+    baseNodePath: "/h1/pelvis",
+    policyJointBindings: h1PolicyJointBindings,
+    articulationParents: h1ArticulationParents,
+    transformOverrides: h1ArticulationTransformOverrides)
+
+private let h1SolidColorByNodePath: [String: SIMD4<UInt8>] = {
+    let body = SIMD4<UInt8>(26, 26, 26, 255)
+    let white = SIMD4<UInt8>(255, 255, 255, 255)
+    let whiteLinks: Set<String> = [
+        "d435_left_imager_link",
+        "d435_rgb_module_link",
+        "logo_link",
+        "mid360_link",
+    ]
+    let linkNames = [
+        "pelvis",
+        "left_hip_yaw_link",
+        "left_hip_roll_link",
+        "left_hip_pitch_link",
+        "left_knee_link",
+        "left_ankle_link",
+        "right_hip_yaw_link",
+        "right_hip_roll_link",
+        "right_hip_pitch_link",
+        "right_knee_link",
+        "right_ankle_link",
+        "torso_link",
+        "d435_left_imager_link",
+        "d435_rgb_module_link",
+        "left_shoulder_pitch_link",
+        "left_shoulder_roll_link",
+        "left_shoulder_yaw_link",
+        "left_elbow_link",
+        "logo_link",
+        "mid360_link",
+        "right_shoulder_pitch_link",
+        "right_shoulder_roll_link",
+        "right_shoulder_yaw_link",
+        "right_elbow_link",
+    ]
+
+    var colors: [String: SIMD4<UInt8>] = [:]
+    colors["*"] = body
+    for link in linkNames {
+        let color = whiteLinks.contains(link) ? white : body
+        colors["/h1/\(link)/visuals"] = color
+        colors["/h1/\(link)/visuals/visuals"] = color
+    }
+    return colors
+}()
 
 private let go2SolidColorByNodePath: [String: SIMD4<UInt8>] = {
     let mediumGray = SIMD4<UInt8>(77, 77, 77, 255)

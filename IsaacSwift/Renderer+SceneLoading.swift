@@ -435,6 +435,11 @@ extension Renderer {
             return BaseColorTextureResolution(texture: texture, source: .solidColor)
         }
 
+        if let color = context.solidColorByNodePath["*"],
+           let texture = makeSolidColorTexture(device: context.device, color: color) {
+            return BaseColorTextureResolution(texture: texture, source: .solidColor)
+        }
+
         return BaseColorTextureResolution(texture: context.defaultTexture, source: .fallback)
     }
 
@@ -484,6 +489,11 @@ extension Renderer {
                                                                        context: context,
                                                                        options: options) {
             return namedTextureResolution
+        }
+
+        if let texture = makeSolidColorTextureFromMaterialName(material.name,
+                                                               device: context.device) {
+            return BaseColorTextureResolution(texture: texture, source: .solidColor)
         }
 
         for property in candidateColorProperties(in: material) {
@@ -569,6 +579,18 @@ extension Renderer {
         }
 
         return nil
+    }
+
+    private class func makeSolidColorTextureFromMaterialName(_ materialName: String,
+                                                             device: MTLDevice) -> MTLTexture? {
+        switch materialName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "material_191919":
+            return makeSolidColorTexture(device: device, color: SIMD4<UInt8>(26, 26, 26, 255))
+        case "material_100100100":
+            return makeSolidColorTexture(device: device, color: SIMD4<UInt8>(255, 255, 255, 255))
+        default:
+            return nil
+        }
     }
 
     private class func candidateTextureRelativePaths(for material: MDLMaterial,

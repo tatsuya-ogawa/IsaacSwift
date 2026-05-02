@@ -6,6 +6,7 @@ cd "$(dirname "$0")/.."
 required_policies=(
   "PolicyModels/spot_policy.mlmodelc"
   "PolicyModels/anymal_policy.mlmodelc"
+  "PolicyModels/h1_policy.mlmodelc"
 )
 
 missing_policies=()

@@ -7,6 +7,7 @@ required_assets=(
   "IsaacSwift/RobotAssets/anymal_c/anymal_c.usdz"
   "IsaacSwift/RobotAssets/spot/spot.usdz"
   "IsaacSwift/RobotAssets/go2/go2.usdz"
+  "IsaacSwift/RobotAssets/h1/h1.usdz"
 )
 
 missing_assets=()

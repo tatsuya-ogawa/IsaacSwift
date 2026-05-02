@@ -23,6 +23,7 @@
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
@@ -104,7 +105,9 @@ static void InitializeJoltOnce() {
 // (floating base + 4 legs × 3 hinges in HAA/HFE/KFE order). Only the
 // dimensions, masses, gains, and default standing pose change.
 
-static constexpr int kJointCount = 12;
+static constexpr int kQuadrupedJointCount = 12;
+static constexpr int kH1JointCount = 19;
+static constexpr int kMaxJointCount = 19;
 
 struct LegConfig {
     float hipX;
@@ -113,6 +116,8 @@ struct LegConfig {
 };
 
 struct RobotConfig {
+    int jointCount;
+
     // Base
     float baseHalfX;
     float baseHalfY;
@@ -162,7 +167,7 @@ struct RobotConfig {
     //                              RF_HAA, RF_HFE, RF_KFE,
     //                              LH_HAA, LH_HFE, LH_KFE,
     //                              RH_HAA, RH_HFE, RH_KFE]` order.
-    std::array<float, kJointCount> defaults;
+    std::array<float, kMaxJointCount> defaults;
 };
 
 // ANYmal-C config — Isaac Lab `LocomotionVelocityRoughEnv` defaults.
@@ -170,6 +175,7 @@ struct RobotConfig {
 // when `AnymalActuatorRunner` is installed Jolt hinge motors are disabled and
 // the LSTM effort is applied directly as a parent/child torque pair.
 static const RobotConfig kAnymalConfig = {
+    /*jointCount=*/kQuadrupedJointCount,
     /*baseHalfX=*/0.31f, /*baseHalfY=*/0.15f, /*baseHalfZ=*/0.075f,
     /*baseMass=*/25.0f, /*baseFriction=*/0.6f,
     /*hipOffsetX=*/0.28f, /*hipOffsetY=*/0.105f,
@@ -191,6 +197,7 @@ static const RobotConfig kAnymalConfig = {
         0.0f,  0.4f, -0.8f,
         0.0f, -0.4f,  0.8f,
         0.0f, -0.4f,  0.8f,
+        0, 0, 0, 0, 0, 0, 0,
     }},
 };
 
@@ -205,6 +212,7 @@ static const RobotConfig kAnymalConfig = {
 // values picked by `spotPolicyJointPermutationAndGainSweep` and match
 // Isaac Lab's `spot._action_scale = 0.2`.
 static const RobotConfig kSpotConfig = {
+    /*jointCount=*/kQuadrupedJointCount,
     /*baseHalfX=*/0.45f, /*baseHalfY=*/0.18f, /*baseHalfZ=*/0.075f,
     /*baseMass=*/30.0f, /*baseFriction=*/0.6f,
     /*hipOffsetX=*/0.29f, /*hipOffsetY=*/0.07f,
@@ -226,6 +234,7 @@ static const RobotConfig kSpotConfig = {
         -0.1f,  0.9f, -1.5f,   // FR
         +0.1f,  1.1f, -1.5f,   // HL
         -0.1f,  1.1f, -1.5f,   // HR
+        0, 0, 0, 0, 0, 0, 0,
     }},
 };
 
@@ -233,6 +242,7 @@ static const RobotConfig kSpotConfig = {
 // The policy is currently a placeholder, so the PD gains are conservative
 // Jolt-local values while effort limits and dimensions follow the USD.
 static const RobotConfig kGo2Config = {
+    /*jointCount=*/kQuadrupedJointCount,
     /*baseHalfX=*/0.1881f, /*baseHalfY=*/0.04675f, /*baseHalfZ=*/0.057f,
     /*baseMass=*/6.921f, /*baseFriction=*/0.6f,
     /*hipOffsetX=*/0.1934f, /*hipOffsetY=*/0.0465f,
@@ -254,11 +264,57 @@ static const RobotConfig kGo2Config = {
         -0.1f, 0.8f, -1.5f,   // FR
         +0.1f, 1.0f, -1.5f,   // RL
         -0.1f, 1.0f, -1.5f,   // RR
+        0, 0, 0, 0, 0, 0, 0,
+    }},
+};
+
+// Unitree H1 config — Isaac Sim `H1FlatTerrainPolicy` defaults. The local
+// Jolt hinge order follows the USD file; policy I/O is remapped separately
+// to Isaac Sim's PhysX traversal order in `IsaacPolicyRuntimeConfiguration`.
+static const RobotConfig kH1Config = {
+    /*jointCount=*/kH1JointCount,
+    /*baseHalfX=*/0.12f, /*baseHalfY=*/0.09f, /*baseHalfZ=*/0.08f,
+    /*baseMass=*/5.39f, /*baseFriction=*/0.8f,
+    /*hipOffsetX=*/0.0f, /*hipOffsetY=*/0.0f,
+    /*hipLinkHalf=*/0.04f, /*hipLinkMass=*/2.2f, /*hipFriction=*/0.8f,
+    /*hfeOffsetX=*/0.0f, /*hfeOffsetY=*/0.0f, /*hfeOffsetZ=*/0.0f,
+    /*thighLength=*/0.4f, /*thighRadius=*/0.045f,
+    /*thighMass=*/4.152f, /*thighFriction=*/0.8f,
+    /*kfeOffsetX=*/0.0f,
+    /*shankLength=*/0.4f, /*shankRadius=*/0.035f,
+    /*shankMass=*/1.721f, /*footRadius=*/0.05f,
+    /*footMass=*/0.474f, /*footOffsetX=*/0.0f,
+    /*footOffsetY=*/0.0f, /*footOffsetZ=*/0.0f,
+    /*shankFriction=*/1.2f,
+    /*kp=*/160.0f, /*kd=*/6.0f, /*maxTorque=*/300.0f, /*actionScale=*/0.5f,
+    /*physicsTimeStep=*/1.0f / 200.0f,
+    /*spawnZ=*/1.05f,
+    /*defaults=*/{{
+        0.0f,   // left_hip_yaw
+        0.0f,   // right_hip_yaw
+        0.0f,   // torso
+        0.0f,   // left_hip_roll
+       -0.28f,  // left_hip_pitch
+        0.79f,  // left_knee
+       -0.52f,  // left_ankle
+        0.0f,   // right_hip_roll
+       -0.28f,  // right_hip_pitch
+        0.79f,  // right_knee
+       -0.52f,  // right_ankle
+        0.28f,  // left_shoulder_pitch
+        0.28f,  // right_shoulder_pitch
+        0.0f,   // left_shoulder_roll
+        0.0f,   // left_shoulder_yaw
+        0.52f,  // left_elbow
+        0.0f,   // right_shoulder_roll
+        0.0f,   // right_shoulder_yaw
+        0.52f,  // right_elbow
     }},
 };
 
 static const RobotConfig &ConfigForKind(IsaacSwiftRobotKind kind) {
     switch (kind) {
+        case IsaacSwiftRobotKindH1:      return kH1Config;
         case IsaacSwiftRobotKindGo2:     return kGo2Config;
         case IsaacSwiftRobotKindSpot:    return kSpotConfig;
         case IsaacSwiftRobotKindAnymalC:
@@ -279,6 +335,7 @@ static std::array<LegConfig, 4> MakeLegConfigs(const RobotConfig &cfg) {
 
 static JPH::Vec3 V(float x, float y, float z) { return JPH::Vec3(x, y, z); }
 static JPH::Quat Q(float w, float x, float y, float z) { return JPH::Quat(x, y, z, w); }
+static float Degrees(float degrees) { return degrees * JPH::JPH_PI / 180.0f; }
 
 enum AnymalUsdBodyIndex : int {
     kUsdBase = 0,
@@ -463,7 +520,7 @@ static JPH::Vec3 SpotUsdInertialHalfExtents(int bodyIndex) {
     }
 }
 
-static std::array<UsdBodyPose, kSpotUsdBodyCount> MakeSpotUsdBodyPoses(const std::array<float, kJointCount> &defaults,
+static std::array<UsdBodyPose, kSpotUsdBodyCount> MakeSpotUsdBodyPoses(const std::array<float, kMaxJointCount> &defaults,
                                                                        JPH::RVec3 spawn) {
     std::array<UsdBodyPose, kSpotUsdBodyCount> poses{};
     poses[kSpotUsdBase] = UsdBodyPose{spawn, JPH::Quat::sIdentity()};
@@ -487,6 +544,228 @@ static std::array<UsdBodyPose, kSpotUsdBodyCount> MakeSpotUsdBodyPoses(const std
 
         const JPH::RVec3 footPos = llegPos + JPH::RVec3(llegRot * JPH::Vec3(0.0f, 0.0f, -0.3365f));
         poses[leg.footBody] = UsdBodyPose{footPos, llegRot};
+    }
+
+    return poses;
+}
+
+enum H1BodyIndex : int {
+    kH1Pelvis = 0,
+    kH1LeftHipYaw, kH1RightHipYaw, kH1Torso,
+    kH1LeftHipRoll, kH1LeftHipPitch, kH1LeftKnee, kH1LeftAnkle,
+    kH1RightHipRoll, kH1RightHipPitch, kH1RightKnee, kH1RightAnkle,
+    kH1LeftShoulderPitch, kH1RightShoulderPitch,
+    kH1LeftShoulderRoll, kH1LeftShoulderYaw, kH1LeftElbow,
+    kH1RightShoulderRoll, kH1RightShoulderYaw, kH1RightElbow,
+    kH1BodyCount
+};
+
+struct H1BodyDef {
+    const char *name;
+    JPH::Vec3 inertialCom;
+    float mass;
+    JPH::Vec3 inertiaDiag;
+    JPH::Quat principalAxes;
+    JPH::Vec3 collisionCenter;
+    JPH::Vec3 halfExtents;
+    float friction;
+    bool collides;
+};
+
+struct H1JointDef {
+    int parentBody;
+    int childBody;
+    int hingeIndex;
+    JPH::Vec3 localPos0;
+    JPH::Quat localRot0;
+    JPH::Vec3 localPos1;
+    JPH::Quat localRot1;
+    JPH::Vec3 axis;
+};
+
+static const std::array<H1BodyDef, kH1BodyCount> kH1Bodies = {{
+    {"pelvis", V(-0.0002f, 0.00004f, -0.04522f), 5.39f, V(0.04458212f, 0.008246193f, 0.049021088f), Q(0.9999968f, -0.000047209065f, -0.0022397172f, 0.0011977674f), V(0, 0, 0), V(0.05f, 0.05f, 0.05f), 0.8f, true},
+    {"left_hip_yaw_link", V(-0.04923f, 0.0001f, 0.0072f), 2.244f, V(0.0029688515f, 0.0030449356f, 0.0018920124f), Q(0.94657356f, -0.00996608f, 0.31995144f, -0.03911884f), V(-0.04923f, 0.0001f, 0.0072f), V(0.07f, 0.045f, 0.045f), 0.8f, false},
+    {"right_hip_yaw_link", V(-0.04923f, -0.0001f, 0.0072f), 2.244f, V(0.0029688515f, 0.0030449356f, 0.0018920124f), Q(0.94657356f, 0.00996608f, 0.31995144f, 0.03911884f), V(-0.04923f, -0.0001f, 0.0072f), V(0.07f, 0.045f, 0.045f), 0.8f, false},
+    {"torso_link", V(0.000489f, 0.002797f, 0.20484f), 17.789f, V(0.48731524f, 0.40962818f, 0.1278366f), Q(0.99998915f, -0.0013081023f, -0.0028228867f, -0.003491047f), V(0, 0, 0.15f), V(0.04f, 0.08f, 0.05f), 0.8f, true},
+    {"left_hip_roll_link", V(-0.0058f, -0.00319f, -0.00009f), 2.232f, V(0.0020549176f, 0.002253245f, 0.002432637f), Q(0.9963683f, 0.020564958f, 0.0037783533f, -0.08254194f), V(-0.0058f, -0.00319f, -0.00009f), V(0.055f, 0.045f, 0.045f), 0.8f, false},
+    {"left_hip_pitch_link", V(0.00746f, -0.02346f, -0.08193f), 4.152f, V(0.08295033f, 0.08214567f, 0.0051090913f), Q(0.979828f, 0.051352248f, -0.016985333f, -0.19238399f), V(0.00746f, -0.02346f, -0.08193f), V(0.06f, 0.055f, 0.20f), 0.8f, false},
+    {"left_knee_link", V(-0.00136f, -0.00512f, -0.1384f), 1.721f, V(0.012310395f, 0.012523702f, 0.0019428049f), Q(0.99276686f, 0.0052330783f, -0.05363738f, 0.10728284f), V(-0.00136f, -0.00512f, -0.1384f), V(0.045f, 0.045f, 0.20f), 0.8f, false},
+    {"left_ankle_link", V(0.042575f, -0.000001f, -0.044672f), 0.474f, V(0.00015216829f, 0.002900286f, 0.0028129376f), Q(0.9996474f, 0.000078506244f, 0.026554713f, -0.0000010414184f), V(0.05f, 0, -0.05f), V(0.14f, 0.015f, 0.012f), 0.8f, true},
+    {"right_hip_roll_link", V(-0.0058f, 0.00319f, -0.00009f), 2.232f, V(0.0020549176f, 0.002253245f, 0.002432637f), Q(0.9963683f, -0.020564958f, 0.0037783533f, 0.08254194f), V(-0.0058f, 0.00319f, -0.00009f), V(0.055f, 0.045f, 0.045f), 0.8f, false},
+    {"right_hip_pitch_link", V(0.00746f, 0.02346f, -0.08193f), 4.152f, V(0.08295033f, 0.08214567f, 0.0051090913f), Q(0.979828f, -0.051352248f, -0.016985333f, 0.19238399f), V(0.00746f, 0.02346f, -0.08193f), V(0.06f, 0.055f, 0.20f), 0.8f, false},
+    {"right_knee_link", V(-0.00136f, 0.00512f, -0.1384f), 1.721f, V(0.012310395f, 0.012523702f, 0.0019428049f), Q(0.99276686f, -0.0052330783f, -0.05363738f, -0.10728284f), V(-0.00136f, 0.00512f, -0.1384f), V(0.045f, 0.045f, 0.20f), 0.8f, false},
+    {"right_ankle_link", V(0.042575f, 0.000001f, -0.044672f), 0.474f, V(0.00015216829f, 0.002900286f, 0.0028129376f), Q(0.9996474f, -0.000078506244f, 0.026554713f, 0.0000010414184f), V(0.05f, 0, -0.05f), V(0.14f, 0.015f, 0.012f), 0.8f, true},
+    {"left_shoulder_pitch_link", V(0.005045f, 0.053657f, -0.015715f), 1.033f, V(0.0012993595f, 0.00085819757f, 0.000987113f), Q(0.9857733f, -0.16661035f, -0.0075959545f, -0.020839892f), V(0.005045f, 0.053657f, -0.015715f), V(0.055f, 0.045f, 0.08f), 0.6f, false},
+    {"right_shoulder_pitch_link", V(0.005045f, -0.053657f, -0.015715f), 1.033f, V(0.0012993595f, 0.00085819757f, 0.000987113f), Q(0.9857733f, 0.16661035f, -0.0075959545f, 0.020839892f), V(0.005045f, -0.053657f, -0.015715f), V(0.055f, 0.045f, 0.08f), 0.6f, false},
+    {"left_shoulder_roll_link", V(0.000679f, 0.00115f, -0.094076f), 0.793f, V(0.0015825586f, 0.0017038822f, 0.0010033592f), Q(0.99622494f, -0.047725365f, 0.060696196f, -0.039674755f), V(0.000679f, 0.00115f, -0.094076f), V(0.045f, 0.04f, 0.13f), 0.6f, false},
+    {"left_shoulder_yaw_link", V(0.01365f, 0.002767f, -0.16266f), 0.839f, V(0.0037036669f, 0.004080375f, 0.0006226872f), Q(0.9983215f, 0.010050264f, -0.056893215f, 0.0040697176f), V(0.01365f, 0.002767f, -0.16266f), V(0.045f, 0.04f, 0.18f), 0.6f, false},
+    {"left_elbow_link", V(0.164862f, 0.000118f, -0.015734f), 0.723f, V(0.00040830488f, 0.0060057878f, 0.0060182875f), Q(0.99308085f, -0.11443613f, 0.025614899f, 0.006214754f), V(0.164862f, 0.000118f, -0.015734f), V(0.18f, 0.035f, 0.04f), 0.6f, false},
+    {"right_shoulder_roll_link", V(0.000679f, -0.00115f, -0.094076f), 0.793f, V(0.0015825586f, 0.0017038822f, 0.0010033592f), Q(0.99622494f, 0.047725365f, 0.060696196f, 0.039674755f), V(0.000679f, -0.00115f, -0.094076f), V(0.045f, 0.04f, 0.13f), 0.6f, false},
+    {"right_shoulder_yaw_link", V(0.01365f, -0.002767f, -0.16266f), 0.839f, V(0.0037036669f, 0.004080375f, 0.0006226872f), Q(0.9983215f, -0.010050264f, -0.056893215f, -0.0040697176f), V(0.01365f, -0.002767f, -0.16266f), V(0.045f, 0.04f, 0.18f), 0.6f, false},
+    {"right_elbow_link", V(0.164862f, -0.000118f, -0.015734f), 0.723f, V(0.00040830488f, 0.0060057878f, 0.0060182875f), Q(0.99308085f, 0.11443613f, 0.025614899f, -0.006214754f), V(0.164862f, -0.000118f, -0.015734f), V(0.18f, 0.035f, 0.04f), 0.6f, false},
+}};
+
+static const std::array<H1JointDef, kH1JointCount> kH1Joints = {{
+    {kH1Pelvis, kH1LeftHipYaw, 0, V(0, 0.0875f, -0.1742f), Q(1, 0, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisZ()},
+    {kH1Pelvis, kH1RightHipYaw, 1, V(0, -0.0875f, -0.1742f), Q(1, 0, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisZ()},
+    {kH1Pelvis, kH1Torso, 2, V(0, 0, 0), Q(1, 0, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisZ()},
+    {kH1LeftHipYaw, kH1LeftHipRoll, 3, V(0.039468f, 0, 0), Q(1, 0, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisX()},
+    {kH1LeftHipRoll, kH1LeftHipPitch, 4, V(0, 0.11536f, 0), Q(1, 0, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisY()},
+    {kH1LeftHipPitch, kH1LeftKnee, 5, V(0, 0, -0.4f), Q(1, 0, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisY()},
+    {kH1LeftKnee, kH1LeftAnkle, 6, V(0, 0, -0.4f), Q(1, 0, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisY()},
+    {kH1RightHipYaw, kH1RightHipRoll, 7, V(0.039468f, 0, 0), Q(1, 0, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisX()},
+    {kH1RightHipRoll, kH1RightHipPitch, 8, V(0, -0.11536f, 0), Q(1, 0, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisY()},
+    {kH1RightHipPitch, kH1RightKnee, 9, V(0, 0, -0.4f), Q(1, 0, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisY()},
+    {kH1RightKnee, kH1RightAnkle, 10, V(0, 0, -0.4f), Q(1, 0, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisY()},
+    {kH1Torso, kH1LeftShoulderPitch, 11, V(0.0055f, 0.15535f, 0.42999f), Q(0.97629625f, 0.21643849f, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisY()},
+    {kH1Torso, kH1RightShoulderPitch, 12, V(0.0055f, -0.15535f, 0.42999f), Q(0.97629625f, -0.21643849f, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisY()},
+    {kH1LeftShoulderPitch, kH1LeftShoulderRoll, 13, V(-0.0055f, 0.0565f, -0.0165f), Q(0.97629625f, -0.21643849f, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisX()},
+    {kH1LeftShoulderRoll, kH1LeftShoulderYaw, 14, V(0, 0, -0.1343f), Q(1, 0, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisZ()},
+    {kH1LeftShoulderYaw, kH1LeftElbow, 15, V(0.0185f, 0, -0.198f), Q(1, 0, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisY()},
+    {kH1RightShoulderPitch, kH1RightShoulderRoll, 16, V(-0.0055f, -0.0565f, -0.0165f), Q(0.97629625f, 0.21643849f, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisX()},
+    {kH1RightShoulderRoll, kH1RightShoulderYaw, 17, V(0, 0, -0.1343f), Q(1, 0, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisZ()},
+    {kH1RightShoulderYaw, kH1RightElbow, 18, V(0.0185f, 0, -0.198f), Q(1, 0, 0, 0), V(0, 0, 0), Q(1, 0, 0, 0), JPH::Vec3::sAxisY()},
+}};
+
+// H1's Isaac Lab environment overrides the USD's generic drives with
+// actuator groups: strong legs/torso, compliant ankles, and damped arms.
+// Keeping one global PD drive across all 19 joints makes the ankles and arms
+// overreact to the flat-terrain policy and tips the humanoid immediately.
+static const std::array<float, kH1JointCount> kH1JointStiffness = {{
+    150.0f, 150.0f, 200.0f,
+    150.0f, 200.0f, 200.0f, 20.0f,
+    150.0f, 200.0f, 200.0f, 20.0f,
+    40.0f, 40.0f, 40.0f, 40.0f, 40.0f,
+    40.0f, 40.0f, 40.0f,
+}};
+
+static const std::array<float, kH1JointCount> kH1JointDamping = {{
+    5.0f, 5.0f, 5.0f,
+    5.0f, 5.0f, 5.0f, 4.0f,
+    5.0f, 5.0f, 5.0f, 4.0f,
+    10.0f, 10.0f, 10.0f, 10.0f, 10.0f,
+    10.0f, 10.0f, 10.0f,
+}};
+
+static const std::array<float, kH1JointCount> kH1JointMaxTorque = {{
+    300.0f, 300.0f, 300.0f,
+    300.0f, 300.0f, 300.0f, 100.0f,
+    300.0f, 300.0f, 300.0f, 100.0f,
+    300.0f, 300.0f, 300.0f, 300.0f, 300.0f,
+    300.0f, 300.0f, 300.0f,
+}};
+
+static const std::array<float, kH1JointCount> kH1JointLowerLimit = {{
+    Degrees(-24.637184f),
+    Degrees(-24.637184f),
+    Degrees(-134.64507f),
+    Degrees(-24.637184f),
+    Degrees(-179.90874f),
+    Degrees(-14.896901f),
+    Degrees(-49.847324f),
+    Degrees(-24.637184f),
+    Degrees(-179.90874f),
+    Degrees(-14.896901f),
+    Degrees(-49.847324f),
+    Degrees(-164.43887f),
+    Degrees(-164.43887f),
+    Degrees(-19.480564f),
+    Degrees(-74.484505f),
+    Degrees(-71.61972f),
+    Degrees(-178.18987f),
+    Degrees(-254.96619f),
+    Degrees(-71.61972f),
+}};
+
+static const std::array<float, kH1JointCount> kH1JointUpperLimit = {{
+    Degrees(24.637184f),
+    Degrees(24.637184f),
+    Degrees(134.64507f),
+    Degrees(24.637184f),
+    Degrees(144.95831f),
+    Degrees(117.45634f),
+    Degrees(29.793802f),
+    Degrees(24.637184f),
+    Degrees(144.95831f),
+    Degrees(117.45634f),
+    Degrees(29.793802f),
+    Degrees(164.43887f),
+    Degrees(164.43887f),
+    Degrees(178.18987f),
+    Degrees(254.96619f),
+    Degrees(149.54198f),
+    Degrees(19.480564f),
+    Degrees(74.484505f),
+    Degrees(149.54198f),
+}};
+
+static float JointStiffnessForKind(IsaacSwiftRobotKind kind, int jointIndex, float fallback) {
+    if (kind == IsaacSwiftRobotKindH1 && jointIndex >= 0 && jointIndex < kH1JointCount) {
+        return kH1JointStiffness[jointIndex];
+    }
+    return fallback;
+}
+
+static float JointDampingForKind(IsaacSwiftRobotKind kind, int jointIndex, float fallback) {
+    if (kind == IsaacSwiftRobotKindH1 && jointIndex >= 0 && jointIndex < kH1JointCount) {
+        return kH1JointDamping[jointIndex];
+    }
+    return fallback;
+}
+
+static float JointMaxTorqueForKind(IsaacSwiftRobotKind kind, int jointIndex, float fallback) {
+    if (kind == IsaacSwiftRobotKindH1 && jointIndex >= 0 && jointIndex < kH1JointCount) {
+        return kH1JointMaxTorque[jointIndex];
+    }
+    return fallback;
+}
+
+static float JointPolicyDirectionForKind(IsaacSwiftRobotKind kind, int jointIndex) {
+    (void)kind;
+    (void)jointIndex;
+    return 1.0f;
+}
+
+static float ClampJoltHingeLimit(float limit) {
+    return std::clamp(limit, -3.14f, 3.14f);
+}
+
+static float JointLowerDeltaLimitForKind(IsaacSwiftRobotKind kind, int jointIndex, float defaultAngle) {
+    if (kind == IsaacSwiftRobotKindH1 && jointIndex >= 0 && jointIndex < kH1JointCount) {
+        return ClampJoltHingeLimit(kH1JointLowerLimit[jointIndex]);
+    }
+    (void)defaultAngle;
+    return -3.14f;
+}
+
+static float JointUpperDeltaLimitForKind(IsaacSwiftRobotKind kind, int jointIndex, float defaultAngle) {
+    if (kind == IsaacSwiftRobotKindH1 && jointIndex >= 0 && jointIndex < kH1JointCount) {
+        return ClampJoltHingeLimit(kH1JointUpperLimit[jointIndex]);
+    }
+    (void)defaultAngle;
+    return 3.14f;
+}
+
+static float ClampJointTargetDeltaForKind(IsaacSwiftRobotKind kind, int jointIndex, float targetDelta, float defaultAngle) {
+    const float lower = JointLowerDeltaLimitForKind(kind, jointIndex, defaultAngle);
+    const float upper = JointUpperDeltaLimitForKind(kind, jointIndex, defaultAngle);
+    return std::clamp(targetDelta, lower, upper);
+}
+
+static std::array<UsdBodyPose, kH1BodyCount> MakeH1BodyPoses(const std::array<float, kMaxJointCount> &defaults,
+                                                             JPH::RVec3 spawn) {
+    std::array<UsdBodyPose, kH1BodyCount> poses{};
+    poses[kH1Pelvis] = UsdBodyPose{spawn, JPH::Quat::sIdentity()};
+
+    for (const H1JointDef &joint : kH1Joints) {
+        const UsdBodyPose &parent = poses[joint.parentBody];
+        const JPH::RVec3 jointPos = parent.position + JPH::RVec3(parent.rotation * joint.localPos0);
+        const JPH::Quat jointRot = parent.rotation * joint.localRot0;
+        const JPH::Quat childFrameRot = jointRot * JPH::Quat::sRotation(joint.axis, defaults[joint.hingeIndex]);
+        const JPH::Quat childRot = childFrameRot * joint.localRot1.Conjugated();
+        const JPH::RVec3 childPos = jointPos - JPH::RVec3(childRot * joint.localPos1);
+        poses[joint.childBody] = UsdBodyPose{childPos, childRot};
     }
 
     return poses;
@@ -530,26 +809,28 @@ struct AnymalSimState {
     std::array<JPH::BodyID, kAnymalUsdBodyCount>       usdBodies{};
     bool                                               usesUsdSpot = false;
     std::array<JPH::BodyID, kSpotUsdBodyCount>         spotUsdBodies{};
-    std::array<JPH::Ref<JPH::HingeConstraint>, kJointCount> hinges{};
+    bool                                               usesUsdH1 = false;
+    std::array<JPH::BodyID, kH1BodyCount>              h1Bodies{};
+    std::array<JPH::Ref<JPH::HingeConstraint>, kMaxJointCount> hinges{};
     std::array<JPH::Ref<JPH::FixedConstraint>, 4>       footFixedConstraints{};
     // For external-torque actuator path: per-hinge body-local hinge axis (in
     // body1's frame at construction time, when both bodies are at identity)
     // and the two body IDs the constraint connects. Used to apply equal/
     // opposite torque pairs through `BodyInterface::AddTorque`.
-    std::array<JPH::Vec3,   kJointCount> hingeAxisLocal{};
-    std::array<JPH::BodyID, kJointCount> hingeBodyA{};
-    std::array<JPH::BodyID, kJointCount> hingeBodyB{};
+    std::array<JPH::Vec3,   kMaxJointCount> hingeAxisLocal{};
+    std::array<JPH::BodyID, kMaxJointCount> hingeBodyA{};
+    std::array<JPH::BodyID, kMaxJointCount> hingeBodyB{};
     // Previous joint angle, used to compute joint angular velocity per
     // substep for the actuator. Updated each substep.
-    std::array<float, kJointCount>       prevSubstepAngles{};
+    std::array<float, kMaxJointCount>       prevSubstepAngles{};
 
     RobotConfig                                        config;
     std::array<LegConfig, 4>                           legs{};
-    std::array<float, kJointCount>                     defaults{};
+    std::array<float, kMaxJointCount>                  defaults{};
     // Smoothed motor targets (EMA filter to simulate SEA actuator delay).
-    std::array<float, kJointCount>                     smoothedTargets{};
+    std::array<float, kMaxJointCount>                  smoothedTargets{};
     // Computed joint velocities from the most recent step.
-    std::array<float, kJointCount>                     jointVelocities{};
+    std::array<float, kMaxJointCount>                  jointVelocities{};
     double                                             accumulator = 0.0;
 };
 
@@ -623,11 +904,13 @@ struct AnymalSimState {
     _jointStiffness  = _config.kp;
     _jointDamping    = _config.kd;
     _maxJointTorque  = _config.maxTorque;
-    _motorTargetSmoothingTau = 0.008f;  // 8 ms — Spot/Isaac Lab default.
+    _motorTargetSmoothingTau = (robotKind == IsaacSwiftRobotKindH1)
+        ? 0.0f
+        : 0.008f;  // 8 ms — Spot/Isaac Lab default.
     _spawnPosition   = simd_make_float3(0.0f, 0.0f, _config.spawnZ);
 
-    NSMutableArray<NSNumber *> *defaults = [NSMutableArray arrayWithCapacity:kJointCount];
-    for (int i = 0; i < kJointCount; ++i) {
+    NSMutableArray<NSNumber *> *defaults = [NSMutableArray arrayWithCapacity:_config.jointCount];
+    for (int i = 0; i < _config.jointCount; ++i) {
         [defaults addObject:@(_config.defaults[i])];
     }
     _defaultJointPositions = [defaults copy];
@@ -636,7 +919,7 @@ struct AnymalSimState {
     return self;
 }
 
-- (NSUInteger)jointCount { return kJointCount; }
+- (NSUInteger)jointCount { return (NSUInteger)_config.jointCount; }
 
 - (float)recommendedActionScale { return _config.actionScale; }
 
@@ -645,10 +928,10 @@ struct AnymalSimState {
 - (NSArray<NSNumber *> *)defaultJointPositions { return _defaultJointPositions; }
 
 - (void)setDefaultJointPositions:(NSArray<NSNumber *> *)defaults {
-    NSAssert(defaults.count == kJointCount, @"default joint positions must have %d entries", kJointCount);
+    NSAssert(defaults.count == _config.jointCount, @"default joint positions count must match robot joint count");
     _defaultJointPositions = [defaults copy];
     if (_state) {
-        for (NSUInteger i = 0; i < kJointCount; ++i) {
+        for (NSUInteger i = 0; i < (NSUInteger)_config.jointCount; ++i) {
             _state->defaults[i] = _defaultJointPositions[i].floatValue;
         }
     }
@@ -671,6 +954,8 @@ struct AnymalSimState {
         for (auto &id : _state->usdBodies) destroy(id);
     } else if (_state->usesUsdSpot) {
         for (auto &id : _state->spotUsdBodies) destroy(id);
+    } else if (_state->usesUsdH1) {
+        for (auto &id : _state->h1Bodies) destroy(id);
     } else {
         for (auto &id : _state->feet)     destroy(id);
         for (auto &id : _state->shanks)   destroy(id);
@@ -687,7 +972,7 @@ struct AnymalSimState {
     auto state = std::make_unique<AnymalSimState>();
     state->config = _config;
     state->legs   = MakeLegConfigs(_config);
-    for (int i = 0; i < kJointCount; ++i) {
+    for (int i = 0; i < _config.jointCount; ++i) {
         state->defaults[i] = _defaultJointPositions[i].floatValue;
     }
 
@@ -708,8 +993,15 @@ struct AnymalSimState {
     state->physicsSystem->SetGravity(JPH::Vec3(0.0f, 0.0f, -9.81f));
 
     JPH::PhysicsSettings settings = state->physicsSystem->GetPhysicsSettings();
-    settings.mNumVelocitySteps = 10;
+    settings.mNumVelocitySteps = (_robotKind == IsaacSwiftRobotKindH1) ? 16 : 10;
     settings.mNumPositionSteps = 4;
+    if (_robotKind == IsaacSwiftRobotKindH1) {
+        // H1's foot collision is only 2.4 cm thick. Jolt's default 2 cm
+        // penetration slop is large enough to make the foot look and behave
+        // partially buried compared with Isaac Sim / PhysX.
+        settings.mPenetrationSlop = 0.002f;
+        settings.mSpeculativeContactDistance = 0.010f;
+    }
     state->physicsSystem->SetPhysicsSettings(settings);
 
     JPH::BodyInterface &bi = state->physicsSystem->GetBodyInterface();
@@ -728,6 +1020,46 @@ struct AnymalSimState {
         bcs.mLinearDamping   = linDamp;
         bcs.mAngularDamping  = angDamp;
         bcs.mAllowSleeping   = allowSleep;
+        if (_robotKind == IsaacSwiftRobotKindH1 && motion == JPH::EMotionType::Dynamic) {
+            bcs.mNumVelocityStepsOverride = 16;
+            bcs.mNumPositionStepsOverride = 4;
+            if (layer == Layers::kMoving) {
+                bcs.mMotionQuality = JPH::EMotionQuality::LinearCast;
+            }
+        }
+        JPH::Body *body = bi.CreateBody(bcs);
+        bi.AddBody(body->GetID(),
+                   motion == JPH::EMotionType::Static ? JPH::EActivation::DontActivate
+                                                       : JPH::EActivation::Activate);
+        return body;
+    };
+
+    auto makeBodyWithMassProperties = [&](JPH::Shape *shape,
+                                          JPH::RVec3 pos, JPH::Quat rot,
+                                          JPH::EMotionType motion, JPH::ObjectLayer layer,
+                                          float mass, JPH::Vec3 inertiaDiag, JPH::Quat principalAxes,
+                                          float friction, float linDamp, float angDamp,
+                                          bool allowSleep) -> JPH::Body * {
+        JPH::BodyCreationSettings bcs(shape, pos, rot, motion, layer);
+        if (motion != JPH::EMotionType::Static && mass > 0.0f) {
+            bcs.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
+            bcs.mMassPropertiesOverride.mMass = mass;
+            const JPH::Mat44 axes = JPH::Mat44::sRotation(principalAxes);
+            JPH::Mat44 inertia = axes * JPH::Mat44::sScale(inertiaDiag) * axes.Transposed();
+            inertia(3, 3) = 1.0f;
+            bcs.mMassPropertiesOverride.mInertia = inertia;
+        }
+        bcs.mFriction        = friction;
+        bcs.mLinearDamping   = linDamp;
+        bcs.mAngularDamping  = angDamp;
+        bcs.mAllowSleeping   = allowSleep;
+        if (_robotKind == IsaacSwiftRobotKindH1 && motion == JPH::EMotionType::Dynamic) {
+            bcs.mNumVelocityStepsOverride = 16;
+            bcs.mNumPositionStepsOverride = 4;
+            if (layer == Layers::kMoving) {
+                bcs.mMotionQuality = JPH::EMotionQuality::LinearCast;
+            }
+        }
         JPH::Body *body = bi.CreateBody(bcs);
         bi.AddBody(body->GetID(),
                    motion == JPH::EMotionType::Static ? JPH::EActivation::DontActivate
@@ -807,12 +1139,15 @@ struct AnymalSimState {
         cs.mHingeAxis2   = axisB.Normalized();
         cs.mNormalAxis1  = normalA.Normalized();
         cs.mNormalAxis2  = normalB.Normalized();
-        cs.mLimitsMin    = -3.14f;
-        cs.mLimitsMax    =  3.14f;
+        const float defaultAngle = state->defaults[hingeIndex];
+        cs.mLimitsMin    = JointLowerDeltaLimitForKind(_robotKind, hingeIndex, defaultAngle);
+        cs.mLimitsMax    = JointUpperDeltaLimitForKind(_robotKind, hingeIndex, defaultAngle);
         cs.mMotorSettings.mSpringSettings = JPH::SpringSettings(JPH::ESpringMode::StiffnessAndDamping,
-                                                                _jointStiffness, _jointDamping);
-        cs.mMotorSettings.mMinTorqueLimit = -_maxJointTorque;
-        cs.mMotorSettings.mMaxTorqueLimit =  _maxJointTorque;
+                                                                JointStiffnessForKind(_robotKind, hingeIndex, _jointStiffness),
+                                                                JointDampingForKind(_robotKind, hingeIndex, _jointDamping));
+        const float maxTorque = JointMaxTorqueForKind(_robotKind, hingeIndex, _maxJointTorque);
+        cs.mMotorSettings.mMinTorqueLimit = -maxTorque;
+        cs.mMotorSettings.mMaxTorqueLimit =  maxTorque;
 
         JPH::Constraint *raw = cs.Create(a, b);
         JPH::Ref<JPH::HingeConstraint> hinge = static_cast<JPH::HingeConstraint *>(raw);
@@ -1020,6 +1355,63 @@ struct AnymalSimState {
         return;
     }
 
+    if (_robotKind == IsaacSwiftRobotKindH1) {
+        state->usesUsdH1 = true;
+        std::array<JPH::Body *, kH1BodyCount> bodies{};
+        const std::array<float, kMaxJointCount> zeroJointAngles{};
+        const std::array<UsdBodyPose, kH1BodyCount> poses = MakeH1BodyPoses(zeroJointAngles, spawn);
+
+        for (int i = 0; i < kH1BodyCount; ++i) {
+            const H1BodyDef &def = kH1Bodies[i];
+            JPH::Ref<JPH::BoxShape> collision = new JPH::BoxShape(def.halfExtents, 0.0f);
+            JPH::Ref<JPH::Shape> collisionAtUsdLocal = new JPH::RotatedTranslatedShape(def.collisionCenter,
+                                                                                       JPH::Quat::sIdentity(),
+                                                                                       collision);
+            JPH::Ref<JPH::Shape> shape = new JPH::OffsetCenterOfMassShape(collisionAtUsdLocal,
+                                                                          def.inertialCom - def.collisionCenter);
+            shape->SetEmbedded();
+            bodies[i] = makeBodyWithMassProperties(shape,
+                                                    poses[i].position,
+                                                    poses[i].rotation,
+                                                    JPH::EMotionType::Dynamic,
+                                                    def.collides ? Layers::kMoving : Layers::kInternal,
+                                                    def.mass,
+                                                    def.inertiaDiag,
+                                                    def.principalAxes,
+                                                    def.friction,
+                                                    0.0f,
+                                                    0.0f,
+                                                    false);
+            state->h1Bodies[i] = bodies[i]->GetID();
+        }
+
+        state->base = state->h1Bodies[kH1Pelvis];
+
+        for (const H1JointDef &joint : kH1Joints) {
+            const int p = joint.parentBody;
+            const int c = joint.childBody;
+            const JPH::Quat frame0 = poses[p].rotation * joint.localRot0;
+            const JPH::Quat frame1 = poses[c].rotation * joint.localRot1;
+            const JPH::RVec3 pivot0 = poses[p].position + JPH::RVec3(poses[p].rotation * joint.localPos0);
+            const JPH::RVec3 pivot1 = poses[c].position + JPH::RVec3(poses[c].rotation * joint.localPos1);
+            const JPH::Vec3 normal = std::abs(joint.axis.GetZ()) > 0.5f
+                ? JPH::Vec3::sAxisX()
+                : JPH::Vec3::sAxisZ();
+
+            addUsdHinge(*bodies[p], *bodies[c],
+                        pivot0, pivot1,
+                        frame0 * joint.axis,
+                        frame1 * joint.axis,
+                        frame0 * normal,
+                        frame0 * normal,
+                        joint.hingeIndex);
+        }
+
+        state->physicsSystem->OptimizeBroadPhase();
+        _state = std::move(state);
+        return;
+    }
+
     JPH::Body *baseBody;
     {
         JPH::Ref<JPH::BoxShape> shape = new JPH::BoxShape(JPH::Vec3(cfg.baseHalfX, cfg.baseHalfY, cfg.baseHalfZ));
@@ -1139,7 +1531,7 @@ struct AnymalSimState {
             bi.SetPositionAndRotation(_state->usdBodies[i], origin, def.localRotation, JPH::EActivation::Activate);
             zeroVel(_state->usdBodies[i]);
         }
-        for (int i = 0; i < kJointCount; ++i) {
+        for (int i = 0; i < _config.jointCount; ++i) {
             _state->hinges[i]->SetTargetAngle(0.0f);
             _state->hinges[i]->SetTargetAngularVelocity(0.0f);
             _state->prevSubstepAngles[i] = _state->hinges[i]->GetCurrentAngle();
@@ -1160,7 +1552,29 @@ struct AnymalSimState {
                                       JPH::EActivation::Activate);
             zeroVel(_state->spotUsdBodies[i]);
         }
-        for (int i = 0; i < kJointCount; ++i) {
+        for (int i = 0; i < _config.jointCount; ++i) {
+            _state->hinges[i]->SetTargetAngle(0.0f);
+            _state->hinges[i]->SetTargetAngularVelocity(0.0f);
+            _state->prevSubstepAngles[i] = _state->hinges[i]->GetCurrentAngle();
+        }
+        _state->accumulator = 0.0;
+        _state->jointVelocities.fill(0.0f);
+        _state->smoothedTargets.fill(0.0f);
+        [_jointActuator resetState];
+        return;
+    }
+
+    if (_state->usesUsdH1) {
+        const std::array<float, kMaxJointCount> zeroJointAngles{};
+        const std::array<UsdBodyPose, kH1BodyCount> poses = MakeH1BodyPoses(zeroJointAngles, spawn);
+        for (int i = 0; i < kH1BodyCount; ++i) {
+            bi.SetPositionAndRotation(_state->h1Bodies[i],
+                                      poses[i].position,
+                                      poses[i].rotation,
+                                      JPH::EActivation::Activate);
+            zeroVel(_state->h1Bodies[i]);
+        }
+        for (int i = 0; i < _config.jointCount; ++i) {
             _state->hinges[i]->SetTargetAngle(0.0f);
             _state->hinges[i]->SetTargetAngularVelocity(0.0f);
             _state->prevSubstepAngles[i] = _state->hinges[i]->GetCurrentAngle();
@@ -1230,13 +1644,16 @@ struct AnymalSimState {
 
 - (void)refreshMotorSettings {
     if (!_state) return;
-    for (auto &hinge : _state->hinges) {
+    for (int jointIndex = 0; jointIndex < _config.jointCount; ++jointIndex) {
+        auto &hinge = _state->hinges[jointIndex];
         if (!hinge) continue;
         JPH::MotorSettings &m = hinge->GetMotorSettings();
         m.mSpringSettings = JPH::SpringSettings(JPH::ESpringMode::StiffnessAndDamping,
-                                                _jointStiffness, _jointDamping);
-        m.mMinTorqueLimit = -_maxJointTorque;
-        m.mMaxTorqueLimit =  _maxJointTorque;
+                                                JointStiffnessForKind(_robotKind, jointIndex, _jointStiffness),
+                                                JointDampingForKind(_robotKind, jointIndex, _jointDamping));
+        const float maxTorque = JointMaxTorqueForKind(_robotKind, jointIndex, _maxJointTorque);
+        m.mMinTorqueLimit = -maxTorque;
+        m.mMaxTorqueLimit =  maxTorque;
     }
 }
 
@@ -1251,13 +1668,18 @@ struct AnymalSimState {
     if (!_state) return @[];
 
     const NSUInteger provided = scaledActions.count;
-    // Exponential moving average on motor targets to simulate the ~3-step
-    // (15 ms) phase lag of the SEA actuator network. Alpha ≈ 1 - exp(-dt/tau)
-    // with tau ~ 3 × 5ms = 15ms → alpha ~ 0.28 per substep at 200Hz.
-    // We apply the EMA per substep below.
-    std::array<float, kJointCount> commandedTargets;
-    for (int i = 0; i < kJointCount; ++i) {
-        commandedTargets[i] = i < provided ? scaledActions[i].floatValue : 0.0f;
+    // Optional exponential moving average on motor targets. Direct H1
+    // position policies set tau to zero; actuator-backed quadrupeds may
+    // smooth targets to match their training-time actuator dynamics.
+    const int jointCount = _config.jointCount;
+    std::array<float, kMaxJointCount> commandedTargets;
+    for (int i = 0; i < jointCount; ++i) {
+        const float targetDelta = (i < provided ? scaledActions[i].floatValue : 0.0f)
+            * JointPolicyDirectionForKind(_robotKind, i);
+        const float target = (_robotKind == IsaacSwiftRobotKindH1)
+            ? _state->defaults[i] + targetDelta
+            : targetDelta;
+        commandedTargets[i] = ClampJointTargetDeltaForKind(_robotKind, i, target, _state->defaults[i]);
     }
 
     _state->accumulator += MAX(elapsedTime, 0.0);
@@ -1279,56 +1701,77 @@ struct AnymalSimState {
     JPH::PhysicsSystem &system = *_state->physicsSystem;
 
     // Capture angles before substeps to compute instantaneous velocity.
-    std::array<float, kJointCount> preAngles;
-    for (int i = 0; i < kJointCount; ++i) {
+    std::array<float, kMaxJointCount> preAngles;
+    for (int i = 0; i < jointCount; ++i) {
         preAngles[i] = _state->hinges[i]->GetCurrentAngle();
     }
 
-    // EMA smoothing constant: Spot's Isaac Lab delayed actuator is configured
-    // up to 8ms, so keep this close to that delay instead of the older 20ms
-    // value which over-damps gait targets.
+    // EMA smoothing constant. H1 sets this to zero because Isaac Sim applies
+    // each direct position target immediately at the 200 Hz physics rate.
     const float kTau = MAX(_motorTargetSmoothingTau, 0.0f);
     const float dt   = static_cast<float>(_physicsTimeStep);
     const float alpha = (kTau > 0.0f) ? dt / (kTau + dt) : 1.0f;
 
     id<IsaacSwiftJointActuator> actuator = _jointActuator;
     JPH::BodyInterface &bi = system.GetBodyInterface();
+    // Direct position policies use Jolt's constraint-space position motor,
+    // matching Isaac Sim's `ArticulationAction(joint_positions=...)` contract.
+    // Learned actuator paths provide torque directly.
+    const bool useExternalTorqueDrive = actuator != nil;
+    const bool usePositionMotor = !useExternalTorqueDrive;
 
-    for (int i = 0; i < kJointCount; ++i) {
-        _state->hinges[i]->SetMotorState(actuator != nil
-                                         ? JPH::EMotorState::Off
-                                         : JPH::EMotorState::Position);
+    for (int i = 0; i < jointCount; ++i) {
+        _state->hinges[i]->SetMotorState(usePositionMotor
+                                         ? JPH::EMotorState::Position
+                                         : JPH::EMotorState::Off);
     }
 
     for (int s = 0; s < substeps; ++s) {
-        for (int i = 0; i < kJointCount; ++i) {
+        for (int i = 0; i < jointCount; ++i) {
             _state->smoothedTargets[i] += alpha * (commandedTargets[i] - _state->smoothedTargets[i]);
-            if (actuator == nil) {
+            if (usePositionMotor) {
                 _state->hinges[i]->SetTargetAngle(_state->smoothedTargets[i]);
             }
         }
 
-        if (actuator != nil) {
-            NSMutableArray<NSNumber *> *posErr = [NSMutableArray arrayWithCapacity:kJointCount];
-            NSMutableArray<NSNumber *> *jvel   = [NSMutableArray arrayWithCapacity:kJointCount];
-            for (int i = 0; i < kJointCount; ++i) {
+        if (useExternalTorqueDrive) {
+            NSMutableArray<NSNumber *> *posErr = [NSMutableArray arrayWithCapacity:jointCount];
+            NSMutableArray<NSNumber *> *jvel   = [NSMutableArray arrayWithCapacity:jointCount];
+            std::array<float, kMaxJointCount> currentAngles;
+            std::array<float, kMaxJointCount> driveVelocities;
+            for (int i = 0; i < jointCount; ++i) {
                 const float current = _state->hinges[i]->GetCurrentAngle();
                 const float velSub  = (dt > 0.0f) ? (current - _state->prevSubstepAngles[i]) / dt : 0.0f;
                 _state->prevSubstepAngles[i] = current;
-                [posErr addObject:@(_state->smoothedTargets[i] - current)];
-                [jvel   addObject:@(std::clamp(velSub, -20.0f, 20.0f))];
+                currentAngles[i] = current;
+                const float driveVelocityLimit = (_robotKind == IsaacSwiftRobotKindH1) ? 100.0f : 20.0f;
+                driveVelocities[i] = std::clamp(velSub, -driveVelocityLimit, driveVelocityLimit);
+                if (actuator != nil) {
+                    const float actuatorInputVelocity = std::clamp(velSub, -20.0f, 20.0f);
+                    [posErr addObject:@(_state->smoothedTargets[i] - current)];
+                    [jvel   addObject:@(actuatorInputVelocity)];
+                }
             }
-            NSArray<NSNumber *> *torques = [actuator torquesForJointPositionErrors:posErr
-                                                                    jointVelocities:jvel];
-            const NSUInteger n = MIN((NSUInteger)kJointCount, torques.count);
+            NSArray<NSNumber *> *torques = actuator != nil
+                ? [actuator torquesForJointPositionErrors:posErr jointVelocities:jvel]
+                : nil;
+            const NSUInteger n = actuator != nil ? MIN((NSUInteger)jointCount, torques.count) : (NSUInteger)jointCount;
             // IsaacSim's ANYmal LSTM SEA wrapper clips actuator effort to
             // ±80 N·m. Keep that separate from the local PD assist limit,
             // which remains controlled by `maxJointTorque`.
-            const float actuatorTorqueLimit = (_robotKind == IsaacSwiftRobotKindAnymalC)
-                ? 80.0f
-                : _maxJointTorque;
             for (NSUInteger i = 0; i < n; ++i) {
-                float tau = torques[i].floatValue;
+                float tau;
+                float torqueLimit;
+                if (actuator != nil) {
+                    tau = torques[i].floatValue;
+                    torqueLimit = (_robotKind == IsaacSwiftRobotKindAnymalC) ? 80.0f : _maxJointTorque;
+                } else {
+                    const float positionError = _state->smoothedTargets[i] - currentAngles[i];
+                    tau = JointStiffnessForKind(_robotKind, static_cast<int>(i), _jointStiffness) * positionError
+                        - JointDampingForKind(_robotKind, static_cast<int>(i), _jointDamping) * driveVelocities[i];
+                    torqueLimit = JointMaxTorqueForKind(_robotKind, static_cast<int>(i), _maxJointTorque);
+                }
+                const float actuatorTorqueLimit = torqueLimit;
                 if (tau >  actuatorTorqueLimit) tau =  actuatorTorqueLimit;
                 if (tau < -actuatorTorqueLimit) tau = -actuatorTorqueLimit;
                 JPH::BodyID idA = _state->hingeBodyA[i];
@@ -1348,16 +1791,21 @@ struct AnymalSimState {
 
     // Compute per-step joint velocities: Δangle / Δtime.
     const float totalDt = substeps * static_cast<float>(_physicsTimeStep);
-    for (int i = 0; i < kJointCount; ++i) {
+    for (int i = 0; i < jointCount; ++i) {
         const float postAngle = _state->hinges[i]->GetCurrentAngle();
+        const float direction = JointPolicyDirectionForKind(_robotKind, i);
         _state->jointVelocities[i] = (totalDt > 0)
-            ? (postAngle - preAngles[i]) / totalDt
+            ? direction * (postAngle - preAngles[i]) / totalDt
             : 0.0f;
     }
 
-    NSMutableArray<NSNumber *> *deltas = [NSMutableArray arrayWithCapacity:kJointCount];
-    for (int i = 0; i < kJointCount; ++i) {
-        const float delta = _state->hinges[i]->GetCurrentAngle();
+    NSMutableArray<NSNumber *> *deltas = [NSMutableArray arrayWithCapacity:jointCount];
+    for (int i = 0; i < jointCount; ++i) {
+        const float direction = JointPolicyDirectionForKind(_robotKind, i);
+        const float angle = direction * _state->hinges[i]->GetCurrentAngle();
+        const float delta = (_robotKind == IsaacSwiftRobotKindH1)
+            ? angle - _state->defaults[i]
+            : angle;
         [deltas addObject:@(delta)];
     }
     return deltas;
@@ -1366,12 +1814,13 @@ struct AnymalSimState {
 // MARK: Observation
 
 - (IsaacSwiftAnymalObservation *)currentObservation {
-    NSMutableArray<NSNumber *> *jp  = [NSMutableArray arrayWithCapacity:kJointCount];
-    NSMutableArray<NSNumber *> *jpd = [NSMutableArray arrayWithCapacity:kJointCount];
-    NSMutableArray<NSNumber *> *jv  = [NSMutableArray arrayWithCapacity:kJointCount];
+    const int jointCount = _config.jointCount;
+    NSMutableArray<NSNumber *> *jp  = [NSMutableArray arrayWithCapacity:jointCount];
+    NSMutableArray<NSNumber *> *jpd = [NSMutableArray arrayWithCapacity:jointCount];
+    NSMutableArray<NSNumber *> *jv  = [NSMutableArray arrayWithCapacity:jointCount];
 
     if (!_state) {
-        for (int i = 0; i < kJointCount; ++i) {
+        for (int i = 0; i < jointCount; ++i) {
             [jp addObject:@(0)]; [jpd addObject:@(0)]; [jv addObject:@(0)];
         }
         return [[IsaacSwiftAnymalObservation alloc]
@@ -1387,16 +1836,25 @@ struct AnymalSimState {
 
     JPH::BodyInterface &bi = _state->physicsSystem->GetBodyInterface();
 
-    for (int i = 0; i < kJointCount; ++i) {
-        const float delta = _state->hinges[i]->GetCurrentAngle();
-        const float angle = _state->defaults[i] + delta;
+    for (int i = 0; i < jointCount; ++i) {
+        const float direction = JointPolicyDirectionForKind(_robotKind, i);
+        const float rawAngle = direction * _state->hinges[i]->GetCurrentAngle();
+        const float delta = (_robotKind == IsaacSwiftRobotKindH1)
+            ? rawAngle - _state->defaults[i]
+            : rawAngle;
+        const float angle = (_robotKind == IsaacSwiftRobotKindH1)
+            ? rawAngle
+            : _state->defaults[i] + delta;
         [jp  addObject:@(angle)];
         [jpd addObject:@(delta)];
         // Use the velocity computed during the last step call.
         [jv addObject:@(_state->jointVelocities[i])];
     }
 
-    const JPH::RVec3 basePos     = bi.GetCenterOfMassPosition(_state->base);
+    // Renderer articulation profiles are authored against USD link origins,
+    // not inertial COM positions. H1 carries real USD COM offsets, so using
+    // the COM here makes the visual pelvis appear a few centimeters too low.
+    const JPH::RVec3 basePos     = bi.GetPosition(_state->base);
     const JPH::Quat  baseQuat    = bi.GetRotation(_state->base);
     const JPH::Vec3  baseLinVelW = bi.GetLinearVelocity(_state->base);
     const JPH::Vec3  baseAngVelW = bi.GetAngularVelocity(_state->base);
