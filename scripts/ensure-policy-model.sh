@@ -6,7 +6,10 @@ cd "$(dirname "$0")/.."
 required_policies=(
   "PolicyModels/spot_policy.mlmodelc"
   "PolicyModels/anymal_policy.mlmodelc"
+  "PolicyModels/anymal_rough_policy.mlmodelc"
   "PolicyModels/h1_policy.mlmodelc"
+  "PolicyModels/go2_policy.mlmodelc"
+  "PolicyModels/go2_rough_policy.mlmodelc"
 )
 
 missing_policies=()
@@ -24,6 +27,7 @@ if [[ -d "isaac_policy_sources" ]]; then
   echo "Generate them with: make policy-model" >&2
 else
   echo "Fetch policy sources first with: make fetch-policies" >&2
+  echo "Go2 and rough policies are fetched from: https://github.com/tatsuya-ogawa/IsaacSim_pretrained_models" >&2
   echo "Install conversion tooling with: make policy-tooling" >&2
   echo "Then generate them with: make policy-model" >&2
 fi

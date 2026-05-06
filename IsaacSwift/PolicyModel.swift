@@ -135,11 +135,31 @@ struct PolicyModelConfiguration: Equatable {
                                                  outputFeatureName: "actions",
                                                  repositoryRelativePath: "PolicyModels/anymal_policy.mlmodelc")
 
+    static let anymalRough = PolicyModelConfiguration(resourceName: "anymal_rough_policy",
+                                                      resourceExtension: "mlmodelc",
+                                                      inputFeatureName: "observations",
+                                                      outputFeatureName: "actions",
+                                                      repositoryRelativePath: "PolicyModels/anymal_rough_policy.mlmodelc")
+
     static let h1 = PolicyModelConfiguration(resourceName: "h1_policy",
                                              resourceExtension: "mlmodelc",
                                              inputFeatureName: "observations",
                                              outputFeatureName: "actions",
                                              repositoryRelativePath: "PolicyModels/h1_policy.mlmodelc")
+
+    static let go2Flat = PolicyModelConfiguration(resourceName: "go2_policy",
+                                                  resourceExtension: "mlmodelc",
+                                                  inputFeatureName: "observations",
+                                                  outputFeatureName: "actions",
+                                                  repositoryRelativePath: "PolicyModels/go2_policy.mlmodelc")
+
+    static let go2Rough = PolicyModelConfiguration(resourceName: "go2_rough_policy",
+                                                   resourceExtension: "mlmodelc",
+                                                   inputFeatureName: "observations",
+                                                   outputFeatureName: "actions",
+                                                   repositoryRelativePath: "PolicyModels/go2_rough_policy.mlmodelc")
+
+    static let go2 = go2Rough
 
     static func configuration(for robotKind: IsaacSwiftRobotKind) -> PolicyModelConfiguration {
         robotKind.modelDefinition.policyModelConfiguration
@@ -159,6 +179,7 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
         var baseAngularVelocityBody: SIMD3<Float> = .zero
         var projectedGravityBody: SIMD3<Float> = SIMD3<Float>(0, 0, -1)
         var velocityCommand: SIMD3<Float> = SIMD3<Float>(0.4, 0, 0)
+        var basePositionWorld: SIMD3<Float> = SIMD3<Float>(0, 0, 0.5)
     }
 
     static let isaacPolicyUpdateInterval = IsaacPolicyRuntimeConfiguration.spotFlat.policyUpdateInterval
@@ -213,11 +234,15 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
     /// simulator (`IsaacSwiftAnymalSimulator.currentObservation()`).
     func updateBaseFeedback(linearVelocityBody: SIMD3<Float>,
                             angularVelocityBody: SIMD3<Float>,
-                            projectedGravityBody: SIMD3<Float>) {
+                            projectedGravityBody: SIMD3<Float>,
+                            basePositionWorld: SIMD3<Float>? = nil) {
         lock.lock()
         feedbackState.baseLinearVelocityBody = linearVelocityBody
         feedbackState.baseAngularVelocityBody = angularVelocityBody
         feedbackState.projectedGravityBody = projectedGravityBody
+        if let basePositionWorld {
+            feedbackState.basePositionWorld = basePositionWorld
+        }
         lock.unlock()
     }
 
@@ -347,14 +372,16 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
         let feedbackState = self.feedbackState
         lock.unlock()
 
-        // Isaac Lab `LocomotionVelocityRoughEnv` observation layout (48 dims):
+        // Isaac Lab locomotion observation layout:
         //   [0:3]   base_lin_vel_b
         //   [3:6]   base_ang_vel_b
         //   [6:9]   projected_gravity_b
         //   [9:12]  velocity_command (vx, vy, wz)
         //   [12:12+N] joint_pos - default_joint_pos
         //   [12+N:12+2N] joint_vel
-        //   [12+2N:12+3N] previous raw actions
+        // Flat policies then store previous raw actions. Rough policies add a
+        // 17x11 height scan; Go2 stores previous_action before height_scan,
+        // while ANYmal-C Direct rough stores height_scan before previous_action.
         func write(_ value: SIMD3<Float>, at offset: Int) {
             if observations.count > offset + 0 { observations[offset + 0] = value.x }
             if observations.count > offset + 1 { observations[offset + 1] = value.y }
@@ -368,7 +395,6 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
         let jointCount = configuration.jointCount
         let jointPositionOffset = 12
         let jointVelocityOffset = jointPositionOffset + jointCount
-        let previousActionOffset = jointVelocityOffset + jointCount
         let jointPositionCount = Swift.min(feedbackState.jointPositionDeltas.count,
                                            Swift.min(max(observations.count - jointPositionOffset, 0), jointCount))
         for index in 0..<jointPositionCount {
@@ -381,10 +407,28 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
             observations[jointVelocityOffset + index] = feedbackState.jointVelocities[index]
         }
 
+        let stateEndOffset = jointVelocityOffset + jointCount
+        let usesAnymalRoughLayout = configuration.robotKind == .anymalC && observations.count == 235
+        let heightScanOffset = usesAnymalRoughLayout ? stateEndOffset : stateEndOffset + jointCount
+        let previousActionOffset = usesAnymalRoughLayout ? 223 : stateEndOffset
+
         let previousActionCount = Swift.min(feedbackState.previousRawActions.count,
                                             Swift.min(max(observations.count - previousActionOffset, 0), jointCount))
         for index in 0..<previousActionCount {
             observations[previousActionOffset + index] = feedbackState.previousRawActions[index]
+        }
+
+        // Rough-terrain policies use a 17x11 ray-cast height scan. The
+        // current simulator exposes a flat ground plane, so every sample has
+        // the same relative height: base_z - terrain_z - Isaac Lab's default
+        // 0.5 m offset, clipped to the rough-env observation range.
+        if observations.count > heightScanOffset {
+            let heightScanEnd = usesAnymalRoughLayout ? previousActionOffset : observations.count
+            let flatGroundHeight = Float(0)
+            let heightSample = Swift.min(Swift.max(feedbackState.basePositionWorld.z - flatGroundHeight - 0.5, -1), 1)
+            for index in heightScanOffset..<heightScanEnd {
+                observations[index] = heightSample
+            }
         }
 
         return observations

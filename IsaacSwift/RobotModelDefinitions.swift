@@ -9,14 +9,145 @@
 import Foundation
 import simd
 
+enum RobotPolicyKind: String, CaseIterable, Hashable {
+    case anymalC = "anymal_c"
+    case anymalCRough = "anymal_c_rough"
+    case spotFlat = "spot_flat"
+    case go2Flat = "go2_flat"
+    case go2Rough = "go2_rough"
+    case h1Flat = "h1_flat"
+
+    var robotKind: IsaacSwiftRobotKind {
+        switch self {
+        case .anymalC, .anymalCRough:
+            return .anymalC
+        case .spotFlat:
+            return .spot
+        case .go2Flat, .go2Rough:
+            return .go2
+        case .h1Flat:
+            return .H1
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .anymalC:
+            return "ANYmal-C"
+        case .anymalCRough:
+            return "ANYmal-C Rough"
+        case .spotFlat:
+            return "Spot Flat"
+        case .go2Flat:
+            return "Go2 Flat"
+        case .go2Rough:
+            return "Go2 Rough"
+        case .h1Flat:
+            return "H1 Flat"
+        }
+    }
+
+    var pickerLabel: String {
+        switch self {
+        case .anymalC:
+            return "Flat"
+        case .anymalCRough:
+            return "Rough"
+        case .spotFlat:
+            return "Flat"
+        case .go2Flat:
+            return "Flat"
+        case .go2Rough:
+            return "Rough"
+        case .h1Flat:
+            return "Flat"
+        }
+    }
+
+    var modelConfiguration: PolicyModelConfiguration {
+        switch self {
+        case .anymalC:
+            return .anymal
+        case .anymalCRough:
+            return .anymalRough
+        case .spotFlat:
+            return .spot
+        case .go2Flat:
+            return .go2Flat
+        case .go2Rough:
+            return .go2Rough
+        case .h1Flat:
+            return .h1
+        }
+    }
+
+    var runtimeConfiguration: IsaacPolicyRuntimeConfiguration {
+        switch self {
+        case .anymalC:
+            return .anymalC
+        case .anymalCRough:
+            return .anymalRough
+        case .spotFlat:
+            return .spotFlat
+        case .go2Flat, .go2Rough:
+            return .go2
+        case .h1Flat:
+            return .h1Flat
+        }
+    }
+
+    static func compatible(with robotKind: IsaacSwiftRobotKind) -> [RobotPolicyKind] {
+        allCases.filter { $0.robotKind == robotKind }
+    }
+
+    static func defaultPolicy(for robotKind: IsaacSwiftRobotKind) -> RobotPolicyKind {
+        switch robotKind {
+        case .anymalC:
+            return .anymalC
+        case .spot:
+            return .spotFlat
+        case .go2:
+            return .go2Rough
+        case .H1:
+            return .h1Flat
+        @unknown default:
+            return .spotFlat
+        }
+    }
+}
+
+struct RobotPolicySelection: Equatable, Hashable {
+    let robotKind: IsaacSwiftRobotKind
+    let policyKind: RobotPolicyKind
+
+    init(robotKind: IsaacSwiftRobotKind,
+         policyKind: RobotPolicyKind? = nil) {
+        self.robotKind = robotKind
+        if let policyKind, policyKind.robotKind == robotKind {
+            self.policyKind = policyKind
+        } else {
+            self.policyKind = RobotPolicyKind.defaultPolicy(for: robotKind)
+        }
+    }
+
+    var modelConfiguration: PolicyModelConfiguration {
+        policyKind.modelConfiguration
+    }
+
+    var runtimeConfiguration: IsaacPolicyRuntimeConfiguration {
+        policyKind.runtimeConfiguration
+    }
+
+    static let `default` = RobotPolicySelection(robotKind: RobotModelDefinitions.defaultKind)
+}
+
 struct RobotModelDefinition {
     let kind: IsaacSwiftRobotKind
     let displayName: String
     let pickerLabel: String
     let assetCandidate: RobotAssetCandidate
     let fallbackAssetCandidates: [RobotAssetCandidate]
-    let policyModelConfiguration: PolicyModelConfiguration
-    let policyRuntimeConfiguration: IsaacPolicyRuntimeConfiguration
+    let defaultPolicyKind: RobotPolicyKind
     let articulationProfile: RobotArticulationProfile
     let solidColorByNodePath: [String: SIMD4<UInt8>]
 
@@ -25,8 +156,7 @@ struct RobotModelDefinition {
          pickerLabel: String,
          assetCandidate: RobotAssetCandidate,
          fallbackAssetCandidates: [RobotAssetCandidate],
-         policyModelConfiguration: PolicyModelConfiguration,
-         policyRuntimeConfiguration: IsaacPolicyRuntimeConfiguration,
+         defaultPolicyKind: RobotPolicyKind,
          articulationProfile: RobotArticulationProfile,
          solidColorByNodePath: [String: SIMD4<UInt8>] = [:]) {
         self.kind = kind
@@ -34,14 +164,25 @@ struct RobotModelDefinition {
         self.pickerLabel = pickerLabel
         self.assetCandidate = assetCandidate
         self.fallbackAssetCandidates = fallbackAssetCandidates
-        self.policyModelConfiguration = policyModelConfiguration
-        self.policyRuntimeConfiguration = policyRuntimeConfiguration
+        self.defaultPolicyKind = defaultPolicyKind
         self.articulationProfile = articulationProfile
         self.solidColorByNodePath = solidColorByNodePath
     }
 
     var assetCandidates: [RobotAssetCandidate] {
         [assetCandidate] + fallbackAssetCandidates
+    }
+
+    var policyOptions: [RobotPolicyKind] {
+        RobotPolicyKind.compatible(with: kind)
+    }
+
+    var policyModelConfiguration: PolicyModelConfiguration {
+        defaultPolicyKind.modelConfiguration
+    }
+
+    var policyRuntimeConfiguration: IsaacPolicyRuntimeConfiguration {
+        defaultPolicyKind.runtimeConfiguration
     }
 }
 
@@ -92,8 +233,7 @@ enum RobotModelDefinitions {
                                                       pickerLabel: "ANYmal",
                                                       assetCandidate: anymalCAsset,
                                                       fallbackAssetCandidates: [],
-                                                      policyModelConfiguration: .anymal,
-                                                      policyRuntimeConfiguration: .anymalC,
+                                                      defaultPolicyKind: .anymalC,
                                                       articulationProfile: anymalArticulationProfile)
 
     private static let spot = RobotModelDefinition(kind: .spot,
@@ -101,8 +241,7 @@ enum RobotModelDefinitions {
                                                    pickerLabel: "Spot",
                                                    assetCandidate: spotAsset,
                                                    fallbackAssetCandidates: [anymalCAsset],
-                                                   policyModelConfiguration: .spot,
-                                                   policyRuntimeConfiguration: .spotFlat,
+                                                   defaultPolicyKind: .spotFlat,
                                                    articulationProfile: spotArticulationProfile)
 
     private static let go2 = RobotModelDefinition(kind: .go2,
@@ -110,8 +249,7 @@ enum RobotModelDefinitions {
                                                   pickerLabel: "Go2",
                                                   assetCandidate: go2Asset,
                                                   fallbackAssetCandidates: [anymalCAsset],
-                                                  policyModelConfiguration: .spot,
-                                                  policyRuntimeConfiguration: .go2,
+                                                  defaultPolicyKind: .go2Rough,
                                                   articulationProfile: go2ArticulationProfile,
                                                   solidColorByNodePath: go2SolidColorByNodePath)
 
@@ -120,8 +258,7 @@ enum RobotModelDefinitions {
                                                  pickerLabel: "H1",
                                                  assetCandidate: h1Asset,
                                                  fallbackAssetCandidates: [],
-                                                 policyModelConfiguration: .h1,
-                                                 policyRuntimeConfiguration: .h1Flat,
+                                                 defaultPolicyKind: .h1Flat,
                                                  articulationProfile: h1ArticulationProfile,
                                                  solidColorByNodePath: h1SolidColorByNodePath)
 }
@@ -145,6 +282,18 @@ extension IsaacPolicyRuntimeConfiguration {
                                                              3, 7, 11,  // RH
                                                          ])
 
+    static let anymalRough = IsaacPolicyRuntimeConfiguration(robotKind: .anymalC,
+                                                             physicsTimeStep: 1.0 / 200.0,
+                                                             policyDecimation: 4,
+                                                             actionScale: 0.5,
+                                                             defaultCommand: SIMD3<Float>(0.8, 0, 0),
+                                                             simToPolicyJointPermutation: [
+                                                                 0, 4, 8,   // LF: HAA, HFE, KFE
+                                                                 2, 6, 10,  // RF
+                                                                 1, 5, 9,   // LH
+                                                                 3, 7, 11,  // RH
+                                                             ])
+
     static let spotFlat = IsaacPolicyRuntimeConfiguration(robotKind: .spot,
                                                           physicsTimeStep: 1.0 / 500.0,
                                                           policyDecimation: 10,
@@ -157,19 +306,18 @@ extension IsaacPolicyRuntimeConfiguration {
                                                               3, 7, 11,  // HR
                                                           ])
 
-    // Go2 does not have a bundled policy yet. This runtime entry is a
-    // placeholder matching Isaac Sim's Go2 USD joint metadata closely enough
-    // for selection, visualization, and zero-action physics tests.
+    // Isaac Lab Unitree Go2 flat policy. `joint_names = [".*"]` resolves to
+    // the PhysX/action-manager order grouped by joint depth.
     static let go2 = IsaacPolicyRuntimeConfiguration(robotKind: .go2,
                                                      physicsTimeStep: 1.0 / 200.0,
                                                      policyDecimation: 4,
                                                      actionScale: 0.25,
-                                                     defaultCommand: SIMD3<Float>(0.4, 0, 0),
+                                                     defaultCommand: SIMD3<Float>(0.8, 0, 0),
                                                      simToPolicyJointPermutation: [
-                                                         0, 4, 5,    // FL: hip, thigh, calf
-                                                         1, 6, 7,    // FR
-                                                         2, 8, 9,    // RL
-                                                         3, 10, 11,  // RR
+                                                         0, 4, 8,    // FL: hip, thigh, calf
+                                                         1, 5, 9,    // FR
+                                                         2, 6, 10,   // RL
+                                                         3, 7, 11,   // RR
                                                      ])
 
     static let h1Flat = IsaacPolicyRuntimeConfiguration(robotKind: .H1,

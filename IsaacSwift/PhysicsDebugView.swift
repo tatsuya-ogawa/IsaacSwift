@@ -26,14 +26,14 @@ final class PhysicsDebugViewModel: ObservableObject {
     @Published var isRunning: Bool = false
     @Published var command: SIMD3<Float>
     /// Read-only mirror of the simulator's robot kind. In standalone mode the
-    /// user can switch this via `switchRobotKind(_:)`. In shared mode it just
-    /// reflects the renderer's choice.
-    @Published private(set) var robotKind: IsaacSwiftRobotKind
+    /// user can switch this via `switchRobotKind(_:)`. In shared mode it
+    /// mirrors the renderer's robot/policy choice.
+    @Published private(set) var selection: RobotPolicySelection
 
     /// Optional external switcher used in shared mode. The host (e.g.
     /// GameViewController) supplies this to recreate the renderer with a new
-    /// robot kind, since the shared loop is owned by the renderer.
-    var externalRobotKindSwitcher: ((IsaacSwiftRobotKind) -> Void)?
+    /// robot/policy pair, since the shared loop is owned by the renderer.
+    var externalSelectionSwitcher: ((RobotPolicySelection) -> Void)?
 
     /// True iff this view model can rebuild its loop directly. In shared
     /// mode an external switcher may still be available; check
@@ -43,10 +43,22 @@ final class PhysicsDebugViewModel: ObservableObject {
     /// True iff the picker should be shown — either we own the loop or the
     /// host installed an external switcher.
     var canRequestRobotKindSwitch: Bool {
-        ownsLoop || externalRobotKindSwitcher != nil
+        ownsLoop || externalSelectionSwitcher != nil
     }
 
     private var runTask: Task<Void, Never>?
+
+    var robotKind: IsaacSwiftRobotKind {
+        selection.robotKind
+    }
+
+    var policyKind: RobotPolicyKind {
+        selection.policyKind
+    }
+
+    var availablePolicies: [RobotPolicyKind] {
+        robotKind.modelDefinition.policyOptions
+    }
 
     struct ObservationSnapshot {
         var basePos: SIMD3<Float> = .zero
@@ -70,10 +82,12 @@ final class PhysicsDebugViewModel: ObservableObject {
     }
 
     /// Use the shared loop from the renderer (pauses it for stepping).
-    init(sharedLoop: PolicyPhysicsLoop) {
+    init(sharedLoop: PolicyPhysicsLoop,
+         selection: RobotPolicySelection) {
         self.loop = sharedLoop
         self.ownsLoop = false
-        self.robotKind = sharedLoop.simulator.robotKind
+        self.selection = RobotPolicySelection(robotKind: sharedLoop.simulator.robotKind,
+                                             policyKind: selection.policyKind)
         self.command = sharedLoop.configuration.defaultCommand
         self.stepCount = sharedLoop.stepCount
         self.simTime = Double(sharedLoop.stepCount) * sharedLoop.configuration.policyUpdateInterval
@@ -83,9 +97,10 @@ final class PhysicsDebugViewModel: ObservableObject {
 
     /// Standalone mode — creates its own loop (used in previews or when no renderer).
     /// Defaults to Spot to match the bundled policy.
-    init(robotKind: IsaacSwiftRobotKind = .spot) {
-        let runtime = IsaacPolicyRuntimeConfiguration.configuration(for: robotKind)
-        let runner = try? PolicyModelRunner(robotKind: robotKind)
+    init(selection explicitSelection: RobotPolicySelection? = nil) {
+        let selection = explicitSelection ?? RobotPolicySelection(robotKind: RobotModelDefinitions.defaultKind)
+        let runtime = selection.runtimeConfiguration
+        let runner = try? PolicyModelRunner(configuration: selection.modelConfiguration)
         let provider: PolicyActionProvider?
         if let runner {
             provider = DemoPolicyActionProvider(runner: runner,
@@ -94,9 +109,11 @@ final class PhysicsDebugViewModel: ObservableObject {
         } else {
             provider = nil
         }
-        self.loop = PolicyPhysicsLoop(robotKind: robotKind, provider: provider)
+        self.loop = PolicyPhysicsLoop(robotKind: selection.robotKind,
+                                      configuration: runtime,
+                                      provider: provider)
         self.ownsLoop = true
-        self.robotKind = robotKind
+        self.selection = selection
         self.command = runtime.defaultCommand
         loop.paused = false
         loop.reset()
@@ -106,17 +123,27 @@ final class PhysicsDebugViewModel: ObservableObject {
     /// Rebuilds the internal loop with a new robot kind. Only valid in
     /// standalone mode (where this view model owns its loop).
     func switchRobotKind(_ kind: IsaacSwiftRobotKind) {
-        guard kind != robotKind else { return }
+        switchSelection(RobotPolicySelection(robotKind: kind,
+                                             policyKind: selection.policyKind))
+    }
+
+    func switchPolicyKind(_ policyKind: RobotPolicyKind) {
+        switchSelection(RobotPolicySelection(robotKind: robotKind,
+                                             policyKind: policyKind))
+    }
+
+    private func switchSelection(_ nextSelection: RobotPolicySelection) {
+        guard nextSelection != selection else { return }
 
         // Shared mode: delegate to the host so it can rebuild the renderer.
         if !ownsLoop {
-            externalRobotKindSwitcher?(kind)
+            externalSelectionSwitcher?(nextSelection)
             return
         }
         stopContinuous()
 
-        let runtime = IsaacPolicyRuntimeConfiguration.configuration(for: kind)
-        let runner = try? PolicyModelRunner(robotKind: kind)
+        let runtime = nextSelection.runtimeConfiguration
+        let runner = try? PolicyModelRunner(configuration: nextSelection.modelConfiguration)
         let provider: PolicyActionProvider?
         if let runner {
             provider = DemoPolicyActionProvider(runner: runner,
@@ -125,8 +152,10 @@ final class PhysicsDebugViewModel: ObservableObject {
         } else {
             provider = nil
         }
-        self.loop = PolicyPhysicsLoop(robotKind: kind, provider: provider)
-        self.robotKind = kind
+        self.loop = PolicyPhysicsLoop(robotKind: nextSelection.robotKind,
+                                      configuration: runtime,
+                                      provider: provider)
+        self.selection = nextSelection
         self.command = runtime.defaultCommand
         self.stepCount = 0
         self.simTime = 0
@@ -422,20 +451,47 @@ struct PhysicsControlBar: View {
                     Text(vm.robotKind.modelDefinition.displayName)
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundColor(.blue)
+                    Text(vm.policyKind.displayName)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundColor(.purple)
                 }
-                .frame(width: 80, alignment: .leading)
+                .frame(width: 92, alignment: .leading)
 
                 if vm.canRequestRobotKindSwitch {
-                    Picker("Robot", selection: Binding(
-                        get: { vm.robotKind },
-                        set: { vm.switchRobotKind($0) }
-                    )) {
+                    Menu {
                         ForEach(RobotModelDefinitions.selectable, id: \.kind) { definition in
-                            Text(definition.pickerLabel).tag(definition.kind)
+                            Button {
+                                vm.switchRobotKind(definition.kind)
+                            } label: {
+                                if definition.kind == vm.robotKind {
+                                    Label(definition.displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(definition.displayName)
+                                }
+                            }
                         }
+                    } label: {
+                        Label(vm.robotKind.modelDefinition.pickerLabel, systemImage: "cube")
                     }
-                    .pickerStyle(.segmented)
-                    .frame(width: CGFloat(RobotModelDefinitions.selectable.count * 62 + 4))
+                    .buttonStyle(.bordered)
+
+                    Menu {
+                        ForEach(vm.availablePolicies, id: \.self) { policyKind in
+                            Button {
+                                vm.switchPolicyKind(policyKind)
+                            } label: {
+                                if policyKind == vm.policyKind {
+                                    Label(policyKind.displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(policyKind.displayName)
+                                }
+                            }
+                        }
+                    } label: {
+                        Label(vm.policyKind.pickerLabel, systemImage: "gearshape.2")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(vm.availablePolicies.count <= 1)
                 }
 
                 HStack(spacing: 8) {
@@ -520,10 +576,12 @@ struct PhysicsDebugView: View {
     var onClose: () -> Void
 
     init(sharedLoop: PolicyPhysicsLoop,
+         selection: RobotPolicySelection,
          onClose: @escaping () -> Void,
-         onRequestRobotKindSwitch: ((IsaacSwiftRobotKind) -> Void)? = nil) {
-        let model = PhysicsDebugViewModel(sharedLoop: sharedLoop)
-        model.externalRobotKindSwitcher = onRequestRobotKindSwitch
+         onRequestSelectionSwitch: ((RobotPolicySelection) -> Void)? = nil) {
+        let model = PhysicsDebugViewModel(sharedLoop: sharedLoop,
+                                          selection: selection)
+        model.externalSelectionSwitcher = onRequestSelectionSwitch
         _vm = StateObject(wrappedValue: model)
         self.onClose = onClose
     }

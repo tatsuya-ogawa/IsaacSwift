@@ -20,7 +20,7 @@ class GameViewController: UIViewController {
     private var debugHostingController: UIViewController?
     private var debugButton: UIButton?
     private var trackingButton: UIButton?
-    private var currentRobotKind: IsaacSwiftRobotKind = RobotModelDefinitions.defaultKind
+    private var currentSelection: RobotPolicySelection = .default
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -56,7 +56,7 @@ class GameViewController: UIViewController {
         mtkView.backgroundColor = UIColor.black
         self.mtkView = mtkView
 
-        guard buildRenderer(into: mtkView, robotKind: currentRobotKind) else {
+        guard buildRenderer(into: mtkView, selection: currentSelection) else {
             return
         }
 
@@ -72,13 +72,14 @@ class GameViewController: UIViewController {
     /// initialize so the caller can show a status message.
     @discardableResult
     private func buildRenderer(into mtkView: MTKView,
-                               robotKind: IsaacSwiftRobotKind) -> Bool {
-        let policyActionProvider = makePolicyActionProvider(robotKind: robotKind)
+                               selection: RobotPolicySelection) -> Bool {
+        let policyActionProvider = makePolicyActionProvider(selection: selection)
 
         guard let newRenderer = Renderer(metalKitView: mtkView,
                                          policyActionProvider: policyActionProvider,
-                                         robotKind: robotKind) else {
-            print("Renderer cannot be initialized (kind=\(robotKind.rawValue))")
+                                         policyRuntimeConfiguration: selection.runtimeConfiguration,
+                                         robotKind: selection.robotKind) else {
+            print("Renderer cannot be initialized (kind=\(selection.robotKind.rawValue), policy=\(selection.policyKind.rawValue))")
             showStatus(message: "Renderer cannot be initialized",
                        identifier: "renderer-status-label")
             return false
@@ -86,10 +87,11 @@ class GameViewController: UIViewController {
 
         self.policyActionProvider = policyActionProvider
         self.renderer = newRenderer
-        self.currentRobotKind = newRenderer.robotKind
+        self.currentSelection = RobotPolicySelection(robotKind: newRenderer.robotKind,
+                                                     policyKind: selection.policyKind)
         mtkView.isAccessibilityElement = true
         mtkView.accessibilityIdentifier = "renderer-view"
-        mtkView.accessibilityValue = "robot=\(newRenderer.robotKind.rawValue)"
+        mtkView.accessibilityValue = "robot=\(newRenderer.robotKind.rawValue),policy=\(currentSelection.policyKind.rawValue)"
 
         renderer.mtkView(mtkView, drawableSizeWillChange: mtkView.drawableSize)
         mtkView.delegate = renderer
@@ -99,12 +101,12 @@ class GameViewController: UIViewController {
     /// Tears down the existing debug overlay (if any), rebuilds the renderer
     /// with the requested robot kind, and reopens the overlay so the user
     /// stays in the debug flow.
-    private func switchRobotKind(_ kind: IsaacSwiftRobotKind) {
-        guard kind != currentRobotKind, let mtkView else { return }
+    private func switchSelection(_ selection: RobotPolicySelection) {
+        guard selection != currentSelection, let mtkView else { return }
         if let existing = debugHostingController {
             hideDebugOverlay(existing)
         }
-        _ = buildRenderer(into: mtkView, robotKind: kind)
+        _ = buildRenderer(into: mtkView, selection: selection)
         showDebugOverlay()
     }
 
@@ -128,15 +130,17 @@ class GameViewController: UIViewController {
         ])
     }
 
-    private func makePolicyActionProvider(robotKind: IsaacSwiftRobotKind) -> PolicyActionProvider? {
+    private func makePolicyActionProvider(selection: RobotPolicySelection) -> PolicyActionProvider? {
         do {
-            let policyModelRunner = try PolicyModelRunner(robotKind: robotKind)
+            let policyModelRunner = try PolicyModelRunner(configuration: selection.modelConfiguration)
             let actions = try policyModelRunner.predictActions(observations: policyModelRunner.zeroObservations())
+            precondition(actions.count == selection.runtimeConfiguration.jointCount,
+                         "Policy action count must match selected runtime joint count")
             print("Policy model loaded: \(policyModelRunner.configuration.resourceName) obs=\(policyModelRunner.observationCount) actions=\(actions.count)")
             return DemoPolicyActionProvider(runner: policyModelRunner,
-                                            configuration: IsaacPolicyRuntimeConfiguration.configuration(for: robotKind))
+                                            configuration: selection.runtimeConfiguration)
         } catch {
-            fatalError("Policy model warm-up failed for \(robotKind): \(error)")
+            fatalError("Policy model warm-up failed for \(selection.robotKind) / \(selection.policyKind): \(error)")
         }
     }
 
@@ -236,12 +240,14 @@ class GameViewController: UIViewController {
     private func showDebugOverlay() {
         guard let sharedLoop = renderer?.policyPhysicsLoop else { return }
         
-        let debugView = PhysicsDebugView(sharedLoop: sharedLoop, onClose: { [weak self] in
+        let debugView = PhysicsDebugView(sharedLoop: sharedLoop,
+                                         selection: currentSelection,
+                                         onClose: { [weak self] in
             if let existing = self?.debugHostingController {
                 self?.hideDebugOverlay(existing)
             }
-        }, onRequestRobotKindSwitch: { [weak self] kind in
-            self?.switchRobotKind(kind)
+        }, onRequestSelectionSwitch: { [weak self] selection in
+            self?.switchSelection(selection)
         })
         
         let hostingController = UIHostingController(rootView: debugView)

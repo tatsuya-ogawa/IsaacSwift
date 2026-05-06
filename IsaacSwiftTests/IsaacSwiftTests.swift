@@ -164,34 +164,68 @@ struct IsaacSwiftTests {
     @Test func loadsPolicyModelAndRunsInference() throws {
         let spotConfiguration = PolicyModelConfiguration.spot
         let anymalConfiguration = PolicyModelConfiguration.anymal
+        let anymalRoughConfiguration = PolicyModelConfiguration.anymalRough
         let h1Configuration = PolicyModelConfiguration.h1
+        let go2Configuration = PolicyModelConfiguration.go2
+        let go2FlatConfiguration = PolicyModelConfiguration.go2Flat
+        let go2RoughConfiguration = PolicyModelConfiguration.go2Rough
+        #expect(go2Configuration == go2RoughConfiguration)
+        #expect(PolicyModelConfiguration.configuration(for: .go2) == go2Configuration)
+        #expect(RobotPolicyKind.anymalC.modelConfiguration == anymalConfiguration)
+        #expect(RobotPolicyKind.anymalCRough.modelConfiguration == anymalRoughConfiguration)
+        #expect(RobotPolicyKind.go2Flat.modelConfiguration == go2FlatConfiguration)
+        #expect(RobotPolicyKind.go2Rough.modelConfiguration == go2RoughConfiguration)
         let bundledSpotURL = PolicyModelRunner.bundledModelURL(configuration: spotConfiguration)
         let bundledAnymalURL = PolicyModelRunner.bundledModelURL(configuration: anymalConfiguration)
+        let bundledAnymalRoughURL = PolicyModelRunner.bundledModelURL(configuration: anymalRoughConfiguration)
         let bundledH1URL = PolicyModelRunner.bundledModelURL(configuration: h1Configuration)
+        let bundledGo2FlatURL = PolicyModelRunner.bundledModelURL(configuration: go2FlatConfiguration)
+        let bundledGo2RoughURL = PolicyModelRunner.bundledModelURL(configuration: go2RoughConfiguration)
         let repositorySpotURL = PolicyModelRunner.repositoryModelURL(configuration: spotConfiguration)
         let repositoryAnymalURL = PolicyModelRunner.repositoryModelURL(configuration: anymalConfiguration)
+        let repositoryAnymalRoughURL = PolicyModelRunner.repositoryModelURL(configuration: anymalRoughConfiguration)
         let repositoryH1URL = PolicyModelRunner.repositoryModelURL(configuration: h1Configuration)
+        let repositoryGo2FlatURL = PolicyModelRunner.repositoryModelURL(configuration: go2FlatConfiguration)
+        let repositoryGo2RoughURL = PolicyModelRunner.repositoryModelURL(configuration: go2RoughConfiguration)
 
         #expect(bundledSpotURL != nil || repositorySpotURL.map { FileManager.default.fileExists(atPath: $0.path) } == true)
         #expect(bundledAnymalURL != nil || repositoryAnymalURL.map { FileManager.default.fileExists(atPath: $0.path) } == true)
+        #expect(bundledAnymalRoughURL != nil || repositoryAnymalRoughURL.map { FileManager.default.fileExists(atPath: $0.path) } == true)
         #expect(bundledH1URL != nil || repositoryH1URL.map { FileManager.default.fileExists(atPath: $0.path) } == true)
+        #expect(bundledGo2FlatURL != nil || repositoryGo2FlatURL.map { FileManager.default.fileExists(atPath: $0.path) } == true)
+        #expect(bundledGo2RoughURL != nil || repositoryGo2RoughURL.map { FileManager.default.fileExists(atPath: $0.path) } == true)
 
         let spotRunner = try PolicyModelRunner(configuration: spotConfiguration)
         let anymalRunner = try PolicyModelRunner(configuration: anymalConfiguration)
+        let anymalRoughRunner = try PolicyModelRunner(configuration: anymalRoughConfiguration)
         let h1Runner = try PolicyModelRunner(configuration: h1Configuration)
+        let go2FlatRunner = try PolicyModelRunner(configuration: go2FlatConfiguration)
+        let go2RoughRunner = try PolicyModelRunner(configuration: go2RoughConfiguration)
         #expect(spotRunner.observationCount == 48)
         #expect(anymalRunner.observationCount == 48)
+        #expect(anymalRoughRunner.observationCount == 235)
         #expect(h1Runner.observationCount == 69)
+        #expect(go2FlatRunner.observationCount == 48)
+        #expect(go2RoughRunner.observationCount == 235)
 
         let spotActions = try spotRunner.predictActions(observations: spotRunner.zeroObservations())
         let anymalActions = try anymalRunner.predictActions(observations: anymalRunner.zeroObservations())
+        let anymalRoughActions = try anymalRoughRunner.predictActions(observations: anymalRoughRunner.zeroObservations())
         let h1Actions = try h1Runner.predictActions(observations: h1Runner.zeroObservations())
+        let go2FlatActions = try go2FlatRunner.predictActions(observations: go2FlatRunner.zeroObservations())
+        let go2RoughActions = try go2RoughRunner.predictActions(observations: go2RoughRunner.zeroObservations())
         #expect(!spotActions.isEmpty)
         #expect(!anymalActions.isEmpty)
+        #expect(anymalRoughActions.count == 12)
         #expect(h1Actions.count == 19)
+        #expect(go2FlatActions.count == 12)
+        #expect(go2RoughActions.count == 12)
         #expect(spotActions.reduce(true) { $0 && $1.isFinite })
         #expect(anymalActions.reduce(true) { $0 && $1.isFinite })
+        #expect(anymalRoughActions.reduce(true) { $0 && $1.isFinite })
         #expect(h1Actions.reduce(true) { $0 && $1.isFinite })
+        #expect(go2FlatActions.reduce(true) { $0 && $1.isFinite })
+        #expect(go2RoughActions.reduce(true) { $0 && $1.isFinite })
 
         let actionProvider = DemoPolicyActionProvider(runner: spotRunner)
         let demoActionsA = actionProvider.currentActions(at: 0)
@@ -200,6 +234,49 @@ struct IsaacSwiftTests {
         #expect(demoActionsB.count == spotActions.count)
         #expect(demoActionsA.reduce(true) { $0 && $1.isFinite })
         #expect(demoActionsB.reduce(true) { $0 && $1.isFinite })
+
+        let anymalRoughProvider = DemoPolicyActionProvider(runner: anymalRoughRunner,
+                                                           configuration: .anymalRough)
+        anymalRoughProvider.updateBaseFeedback(linearVelocityBody: .zero,
+                                               angularVelocityBody: .zero,
+                                               projectedGravityBody: SIMD3<Float>(0, 0, -1),
+                                               basePositionWorld: SIMD3<Float>(0, 0, 0.60))
+        let anymalRoughDemoActions = anymalRoughProvider.currentActions(at: 0)
+        #expect(anymalRoughDemoActions.count == 12)
+        #expect(anymalRoughDemoActions.reduce(true) { $0 && $1.isFinite })
+
+        let go2RoughProvider = DemoPolicyActionProvider(runner: go2RoughRunner,
+                                                        configuration: .go2)
+        go2RoughProvider.updateBaseFeedback(linearVelocityBody: .zero,
+                                            angularVelocityBody: .zero,
+                                            projectedGravityBody: SIMD3<Float>(0, 0, -1),
+                                            basePositionWorld: SIMD3<Float>(0, 0, 0.42))
+        let go2RoughDemoActions = go2RoughProvider.currentActions(at: 0)
+        #expect(go2RoughDemoActions.count == 12)
+        #expect(go2RoughDemoActions.reduce(true) { $0 && $1.isFinite })
+    }
+
+    @Test func robotPolicySelectionsExposeCompatiblePolicyOptions() {
+        for definition in RobotModelDefinitions.all {
+            let policies = definition.policyOptions
+            #expect(!policies.isEmpty,
+                    "\(definition.displayName) must expose at least one selectable policy")
+            #expect(policies.contains(definition.defaultPolicyKind),
+                    "\(definition.displayName) default policy must be selectable")
+            #expect(policies.allSatisfy { $0.robotKind == definition.kind },
+                    "\(definition.displayName) policy options must match the robot kind")
+            #expect(definition.policyModelConfiguration == definition.defaultPolicyKind.modelConfiguration)
+            #expect(definition.policyRuntimeConfiguration == definition.defaultPolicyKind.runtimeConfiguration)
+        }
+
+        #expect(RobotPolicyKind.compatible(with: .anymalC) == [.anymalC, .anymalCRough])
+        #expect(RobotPolicyKind.compatible(with: .go2) == [.go2Flat, .go2Rough])
+        #expect(RobotPolicySelection.default.robotKind == RobotModelDefinitions.defaultKind)
+        #expect(RobotPolicySelection(robotKind: .anymalC).policyKind == .anymalC)
+        #expect(RobotPolicySelection(robotKind: .anymalC, policyKind: .anymalCRough).policyKind == .anymalCRough)
+        #expect(RobotPolicySelection(robotKind: .go2).policyKind == .go2Rough)
+        #expect(RobotPolicySelection(robotKind: .go2, policyKind: .go2Flat).policyKind == .go2Flat)
+        #expect(RobotPolicySelection(robotKind: .spot, policyKind: .go2Rough).policyKind == .spotFlat)
     }
 
     @Test func bufferedPolicyActionProviderReturnsLatestActions() {
@@ -307,7 +384,7 @@ struct IsaacSwiftTests {
         // a bijection over {0..<N}. This guards against typos in the
         // sim-order ↔ policy-order mapping that would otherwise let actions
         // bleed between legs (the original Spot regression).
-        for config in RobotModelDefinitions.all.map(\.policyRuntimeConfiguration) {
+        for config in RobotPolicyKind.allCases.map(\.runtimeConfiguration) {
             let perm = config.simToPolicyJointPermutation
             #expect(perm.count == config.robotKind.modelDefinition.articulationProfile.policyJointBindings.count,
                     "perm count for \(config.robotKind) is \(perm.count)")
@@ -328,9 +405,12 @@ struct IsaacSwiftTests {
         //    LF_KFE, LH_KFE, RF_KFE, RH_KFE]
         // simToPolicy[sim] = policy_index of the same joint.
         let expected = [0, 4, 8, 2, 6, 10, 1, 5, 9, 3, 7, 11]
-        let actual = IsaacPolicyRuntimeConfiguration.anymalC.simToPolicyJointPermutation
-        #expect(actual == expected,
-                "ANYmal sim→policy permutation drifted: got \(actual)")
+        let flat = IsaacPolicyRuntimeConfiguration.anymalC.simToPolicyJointPermutation
+        let rough = IsaacPolicyRuntimeConfiguration.anymalRough.simToPolicyJointPermutation
+        #expect(flat == expected,
+                "ANYmal flat sim→policy permutation drifted: got \(flat)")
+        #expect(rough == expected,
+                "ANYmal rough sim→policy permutation drifted: got \(rough)")
     }
 
     @Test func spotSimToPolicyPermutationMatchesPhysXDofOrder() {
@@ -348,15 +428,16 @@ struct IsaacSwiftTests {
                 "Spot sim→policy permutation drifted: got \(actual)")
     }
 
-    @Test func go2SimToPolicyPermutationMatchesUSDJointOrder() {
+    @Test func go2SimToPolicyPermutationMatchesIsaacLabActionOrder() {
         // Sim is leg-major:
         //   [FL_hip, FL_thigh, FL_calf, FR_hip, FR_thigh, FR_calf,
         //    RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf]
-        // Isaac Sim Go2 USD metadata lists robotJoints as:
+        // Isaac Lab `JointPositionAction(joint_names=[".*"],
+        // preserve_order=false)` resolves action-manager joint names as:
         //   [FL_hip, FR_hip, RL_hip, RR_hip,
-        //    FL_thigh, FL_calf, FR_thigh, FR_calf,
-        //    RL_thigh, RL_calf, RR_thigh, RR_calf]
-        let expected = [0, 4, 5, 1, 6, 7, 2, 8, 9, 3, 10, 11]
+        //    FL_thigh, FR_thigh, RL_thigh, RR_thigh,
+        //    FL_calf, FR_calf, RL_calf, RR_calf]
+        let expected = [0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11]
         let actual = IsaacPolicyRuntimeConfiguration.go2.simToPolicyJointPermutation
         #expect(actual == expected,
                 "Go2 sim->policy permutation drifted: got \(actual)")
