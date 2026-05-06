@@ -30,8 +30,8 @@ The result is a native Swift runtime where Isaac-trained legged robots can walk 
 | --- | --- | --- |
 | Spot | Working | Default robot. The flat-terrain policy walks in the Swift + Jolt runtime with USD-derived physics topology. |
 | ANYmal-C | Working | The flat-terrain policy and ANYdrive actuator model walk in the Swift + Jolt runtime with USD-derived physics topology. |
-| Unitree Go2 | Partial | Asset loading and articulation plumbing exist. A dedicated Go2 policy integration is future work. |
-| Unitree H1 | Experimental | H1 Flat Terrain policy conversion, 19-DOF articulation metadata, USDZ packaging, and Jolt-side humanoid physics plumbing are available. |
+| Unitree Go2 | Working | Flat, rough, and backflip policies run with sim-to-sim robustness tuning for Swift + Jolt. |
+| Unitree H1 | Working | H1 Flat Terrain policy conversion, 19-DOF articulation metadata, USDZ packaging, and Jolt-side humanoid physics plumbing are available. |
 
 ## Architecture
 
