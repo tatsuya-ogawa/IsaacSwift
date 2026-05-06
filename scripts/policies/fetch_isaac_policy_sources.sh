@@ -7,6 +7,7 @@ cd "$repo_root"
 
 policy_source_root="${POLICY_SOURCE_ROOT:-isaac_policy_sources}"
 pretrained_policy_raw_base="${PRETRAINED_POLICY_RAW_BASE:-https://raw.githubusercontent.com/tatsuya-ogawa/IsaacSim_pretrained_models/main}"
+go2_backflip_policy_raw_url="${GO2_BACKFLIP_POLICY_RAW_URL:-https://raw.githubusercontent.com/tatsuya-ogawa/IsaacSim-go2-backflip/main/assets/policy.pt}"
 selection="${1:-all}"
 
 download() {
@@ -82,6 +83,13 @@ fetch_go2_rough() {
   echo "Fetched Go2 rough policy sources into $dest_dir"
 }
 
+fetch_go2_backflip() {
+  local dest_dir="$policy_source_root/Go2_Policies"
+  download "$go2_backflip_policy_raw_url" \
+           "$dest_dir/go2_backflip_policy.pt"
+  echo "Fetched Go2 backflip policy source into $dest_dir"
+}
+
 case "$selection" in
   spot)
     fetch_spot
@@ -101,6 +109,9 @@ case "$selection" in
   go2_rough|go2-rough)
     fetch_go2_rough
     ;;
+  go2_backflip|go2-backflip)
+    fetch_go2_backflip
+    ;;
   all)
     fetch_spot
     fetch_anymal
@@ -108,9 +119,10 @@ case "$selection" in
     fetch_h1
     fetch_go2
     fetch_go2_rough
+    fetch_go2_backflip
     ;;
   *)
-    echo "Usage: $0 [spot|anymal|anymal_rough|h1|go2|go2_rough|all]" >&2
+    echo "Usage: $0 [spot|anymal|anymal_rough|h1|go2|go2_rough|go2_backflip|all]" >&2
     exit 1
     ;;
 esac

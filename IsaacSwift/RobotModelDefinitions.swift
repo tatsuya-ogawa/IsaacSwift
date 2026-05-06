@@ -15,6 +15,7 @@ enum RobotPolicyKind: String, CaseIterable, Hashable {
     case spotFlat = "spot_flat"
     case go2Flat = "go2_flat"
     case go2Rough = "go2_rough"
+    case go2Backflip = "go2_backflip"
     case h1Flat = "h1_flat"
 
     var robotKind: IsaacSwiftRobotKind {
@@ -23,7 +24,7 @@ enum RobotPolicyKind: String, CaseIterable, Hashable {
             return .anymalC
         case .spotFlat:
             return .spot
-        case .go2Flat, .go2Rough:
+        case .go2Flat, .go2Rough, .go2Backflip:
             return .go2
         case .h1Flat:
             return .H1
@@ -42,6 +43,8 @@ enum RobotPolicyKind: String, CaseIterable, Hashable {
             return "Go2 Flat"
         case .go2Rough:
             return "Go2 Rough"
+        case .go2Backflip:
+            return "Go2 Backflip"
         case .h1Flat:
             return "H1 Flat"
         }
@@ -59,6 +62,8 @@ enum RobotPolicyKind: String, CaseIterable, Hashable {
             return "Flat"
         case .go2Rough:
             return "Rough"
+        case .go2Backflip:
+            return "Backflip"
         case .h1Flat:
             return "Flat"
         }
@@ -76,6 +81,8 @@ enum RobotPolicyKind: String, CaseIterable, Hashable {
             return .go2Flat
         case .go2Rough:
             return .go2Rough
+        case .go2Backflip:
+            return .go2Backflip
         case .h1Flat:
             return .h1
         }
@@ -91,6 +98,8 @@ enum RobotPolicyKind: String, CaseIterable, Hashable {
             return .spotFlat
         case .go2Flat, .go2Rough:
             return .go2
+        case .go2Backflip:
+            return .go2Backflip
         case .h1Flat:
             return .h1Flat
         }
@@ -313,12 +322,25 @@ extension IsaacPolicyRuntimeConfiguration {
                                                      policyDecimation: 4,
                                                      actionScale: 0.25,
                                                      defaultCommand: SIMD3<Float>(0.8, 0, 0),
+                                                     defaultJointPositions: go2LocomotionDefaultJointPositions,
                                                      simToPolicyJointPermutation: [
                                                          0, 4, 8,    // FL: hip, thigh, calf
                                                          1, 5, 9,    // FR
                                                          2, 6, 10,   // RL
                                                          3, 7, 11,   // RR
                                                      ])
+
+    // IsaacSim Unitree Go2 backflip policy. Unlike flat/rough locomotion,
+    // this task uses a task-specific actor observation, explicit joint order,
+    // one policy-step action latency, and a task-side PD torque controller.
+    static let go2Backflip = IsaacPolicyRuntimeConfiguration(robotKind: .go2,
+                                                             physicsTimeStep: 1.0 / 200.0,
+                                                             policyDecimation: 4,
+                                                             actionScale: 0.5,
+                                                             defaultCommand: SIMD3<Float>(0, 0, 0),
+                                                             defaultJointPositions: go2BackflipDefaultJointPositions,
+                                                             simToPolicyJointPermutation: go2BackflipPermutation,
+                                                             observationLayout: .go2Backflip(maxEpisodeLength: 100))
 
     static let h1Flat = IsaacPolicyRuntimeConfiguration(robotKind: .H1,
                                                         physicsTimeStep: 1.0 / 200.0,
@@ -337,11 +359,38 @@ extension IsaacPolicyRuntimeConfiguration {
     static func configuration(for robotKind: IsaacSwiftRobotKind) -> IsaacPolicyRuntimeConfiguration {
         robotKind.modelDefinition.policyRuntimeConfiguration
     }
+
+    private static let go2BackflipPermutation = [
+        3, 4, 5,    // local FL -> policy FR slot
+        0, 1, 2,    // local FR -> policy FL slot
+        9, 10, 11,  // local RL -> policy RR slot
+        6, 7, 8,    // local RR -> policy RL slot
+    ]
+
+    private static let go2LocomotionDefaultJointPositions: [Float] = [
+        0.1, 0.8, -1.5,   // FL
+        -0.1, 0.8, -1.5,  // FR
+        0.1, 1.0, -1.5,   // RL
+        -0.1, 1.0, -1.5,  // RR
+    ]
+
+    private static let go2BackflipDefaultJointPositions: [Float] = [
+        0.0, 0.8, -1.5,  // FL
+        0.0, 0.8, -1.5,  // FR
+        0.0, 1.0, -1.5,  // RL
+        0.0, 1.0, -1.5,  // RR
+    ]
 }
 
 extension Renderer {
-    static func articulationProfile(for kind: IsaacSwiftRobotKind) -> RobotArticulationProfile {
-        kind.modelDefinition.articulationProfile
+    static func articulationProfile(for kind: IsaacSwiftRobotKind,
+                                    policyRuntimeConfiguration: IsaacPolicyRuntimeConfiguration? = nil) -> RobotArticulationProfile {
+        if kind == .go2,
+           let policyRuntimeConfiguration,
+           let defaultJointPositions = policyRuntimeConfiguration.defaultJointPositions {
+            return makeGo2ArticulationProfile(defaultJointPositions: defaultJointPositions)
+        }
+        return kind.modelDefinition.articulationProfile
     }
 }
 
@@ -585,20 +634,26 @@ private let go2ArticulationParents: [String: String] = {
     return parents
 }()
 
-private let go2ArticulationTransformOverrides: [ArticulationTransformOverride] = {
+private func makeGo2ArticulationTransformOverrides(defaultJointPositions: [Float]) -> [ArticulationTransformOverride] {
+    precondition(defaultJointPositions.count == go2LegPrefixes.count * 3)
+
     let identityQuat = usdQuaternion(real: 1, ix: 0, iy: 0, iz: 0)
     let jointQuat = usdQuaternion(real: 0.70710677, ix: 0, iy: 0, iz: 0.70710677)
     let xAxis = SIMD3<Float>(1, 0, 0)
-    let legOffsets: [(hipX: Float, hipY: Float, thighY: Float, hip: Float, thigh: Float, calf: Float)] = [
-        (hipX:  0.1934, hipY:  0.0465, thighY:  0.0955, hip:  0.1, thigh: 0.8, calf: -1.5),
-        (hipX:  0.1934, hipY: -0.0465, thighY: -0.0955, hip: -0.1, thigh: 0.8, calf: -1.5),
-        (hipX: -0.1934, hipY:  0.0465, thighY:  0.0955, hip:  0.1, thigh: 1.0, calf: -1.5),
-        (hipX: -0.1934, hipY: -0.0465, thighY: -0.0955, hip: -0.1, thigh: 1.0, calf: -1.5),
+    let legOffsets: [(hipX: Float, hipY: Float, thighY: Float)] = [
+        (hipX:  0.1934, hipY:  0.0465, thighY:  0.0955),
+        (hipX:  0.1934, hipY: -0.0465, thighY: -0.0955),
+        (hipX: -0.1934, hipY:  0.0465, thighY:  0.0955),
+        (hipX: -0.1934, hipY: -0.0465, thighY: -0.0955),
     ]
     var overrides: [ArticulationTransformOverride] = []
 
     for (legIdx, prefix) in go2LegPrefixes.enumerated() {
         let leg = legOffsets[legIdx]
+        let jointOffset = legIdx * 3
+        let hipRestAngle = defaultJointPositions[jointOffset + 0]
+        let thighRestAngle = defaultJointPositions[jointOffset + 1]
+        let calfRestAngle = defaultJointPositions[jointOffset + 2]
         overrides.append(ArticulationTransformOverride(childPath: "/go2_description/\(prefix)_hip",
                                                        parentPath: "/go2_description/base",
                                                        localPos0: SIMD3<Float>(leg.hipX, leg.hipY, 0),
@@ -606,7 +661,7 @@ private let go2ArticulationTransformOverrides: [ArticulationTransformOverride] =
                                                        localPos1: .zero,
                                                        localRot1: identityQuat,
                                                        jointAxis: xAxis,
-                                                       restAngleOffset: leg.hip))
+                                                       restAngleOffset: hipRestAngle))
         overrides.append(ArticulationTransformOverride(childPath: "/go2_description/\(prefix)_thigh",
                                                        parentPath: "/go2_description/\(prefix)_hip",
                                                        localPos0: SIMD3<Float>(0, leg.thighY, 0),
@@ -614,7 +669,7 @@ private let go2ArticulationTransformOverrides: [ArticulationTransformOverride] =
                                                        localPos1: .zero,
                                                        localRot1: jointQuat,
                                                        jointAxis: xAxis,
-                                                       restAngleOffset: leg.thigh))
+                                                       restAngleOffset: thighRestAngle))
         overrides.append(ArticulationTransformOverride(childPath: "/go2_description/\(prefix)_calf",
                                                        parentPath: "/go2_description/\(prefix)_thigh",
                                                        localPos0: SIMD3<Float>(0, 0, -0.213),
@@ -622,7 +677,7 @@ private let go2ArticulationTransformOverrides: [ArticulationTransformOverride] =
                                                        localPos1: .zero,
                                                        localRot1: jointQuat,
                                                        jointAxis: xAxis,
-                                                       restAngleOffset: leg.calf))
+                                                       restAngleOffset: calfRestAngle))
         overrides.append(ArticulationTransformOverride(childPath: "/go2_description/\(prefix)_foot",
                                                        parentPath: "/go2_description/\(prefix)_calf",
                                                        localPos0: SIMD3<Float>(0, 0, -0.213),
@@ -631,13 +686,19 @@ private let go2ArticulationTransformOverrides: [ArticulationTransformOverride] =
                                                        localRot1: usdQuaternion(real: 0.70710677, ix: 0, iy: 0.70710677, iz: 0)))
     }
     return overrides
-}()
+}
 
-private let go2ArticulationProfile = RobotArticulationProfile(
-    baseNodePath: "/go2_description/base",
-    policyJointBindings: go2PolicyJointBindings,
-    articulationParents: go2ArticulationParents,
-    transformOverrides: go2ArticulationTransformOverrides)
+private func makeGo2ArticulationProfile(defaultJointPositions: [Float]) -> RobotArticulationProfile {
+    let transformOverrides = makeGo2ArticulationTransformOverrides(defaultJointPositions: defaultJointPositions)
+    return RobotArticulationProfile(
+        baseNodePath: "/go2_description/base",
+        policyJointBindings: go2PolicyJointBindings,
+        articulationParents: go2ArticulationParents,
+        transformOverrides: transformOverrides)
+}
+
+private let go2ArticulationProfile = makeGo2ArticulationProfile(
+    defaultJointPositions: IsaacPolicyRuntimeConfiguration.go2.defaultJointPositions!)
 
 private struct H1JointSpec {
     let name: String

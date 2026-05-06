@@ -1753,7 +1753,9 @@ struct AnymalSimState {
                 const float driveVelocityLimit = (_robotKind == IsaacSwiftRobotKindH1) ? 100.0f : 20.0f;
                 driveVelocities[i] = std::clamp(velSub, -driveVelocityLimit, driveVelocityLimit);
                 if (actuator != nil) {
-                    const float actuatorInputVelocity = std::clamp(velSub, -20.0f, 20.0f);
+                    const float actuatorInputVelocity = (_robotKind == IsaacSwiftRobotKindAnymalC)
+                        ? std::clamp(velSub, -20.0f, 20.0f)
+                        : velSub;
                     [posErr addObject:@(_state->smoothedTargets[i] - current)];
                     [jvel   addObject:@(actuatorInputVelocity)];
                 }

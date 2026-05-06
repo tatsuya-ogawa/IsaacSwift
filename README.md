@@ -9,9 +9,9 @@ Run Isaac Lab-style legged robot policies directly inside a native Apple runtime
 
 IsaacSwift rebuilds the pieces a trained robot policy needs at execution time: local articulation physics, on-device policy inference, and Metal 4 rendering. It does not embed Isaac Sim. It takes Isaac Sim / Isaac Lab assets and policies as source material, converts them into app-facing artifacts, then runs the control loop on iPhone and iPad-class hardware.
 
-| Spot | ANYmal-C | H1 |
-| --- | --- | --- |
-| ![Spot walking in IsaacSwift](docs/spot.gif) | ![ANYmal-C walking in IsaacSwift](docs/anymal.gif) | ![H1 walking in IsaacSwift](docs/h1.gif)
+| Spot | ANYmal-C | H1 | Go2 Backflip |
+| --- | --- | --- | --- |
+| ![Spot walking in IsaacSwift](docs/spot.gif) | ![ANYmal-C walking in IsaacSwift](docs/anymal.gif) | ![H1 walking in IsaacSwift](docs/h1.gif) | ![Go2 backflip in IsaacSwift](docs/backflip.gif) |
 
 ## Why This Exists
 
@@ -30,8 +30,8 @@ The result is a native Swift runtime where Isaac-trained legged robots can walk 
 | --- | --- | --- |
 | Spot | Working | Default robot. The flat-terrain policy walks in the Swift + Jolt runtime with USD-derived physics topology. |
 | ANYmal-C | Working | The flat-terrain policy and ANYdrive actuator model walk in the Swift + Jolt runtime with USD-derived physics topology. |
-| Unitree Go2 | Partial | Asset loading and articulation plumbing exist. A dedicated Go2 policy integration is future work. |
-| Unitree H1 | Experimental | H1 Flat Terrain policy conversion, 19-DOF articulation metadata, USDZ packaging, and Jolt-side humanoid physics plumbing are available. |
+| Unitree Go2 | Working | Flat, rough, and backflip policies run with sim-to-sim robustness tuning for Swift + Jolt. |
+| Unitree H1 | Working | H1 Flat Terrain policy conversion, 19-DOF articulation metadata, USDZ packaging, and Jolt-side humanoid physics plumbing are available. |
 
 ## Architecture
 
@@ -155,7 +155,11 @@ This generates:
 ```text
 PolicyModels/spot_policy.mlmodelc
 PolicyModels/anymal_policy.mlmodelc
+PolicyModels/anymal_rough_policy.mlmodelc
 PolicyModels/h1_policy.mlmodelc
+PolicyModels/go2_policy.mlmodelc
+PolicyModels/go2_rough_policy.mlmodelc
+PolicyModels/go2_backflip_policy.mlmodelc
 ```
 
 You can build one policy at a time with:
@@ -163,10 +167,16 @@ You can build one policy at a time with:
 ```bash
 make spot-policy-model
 make anymal-policy-model
+make anymal-rough-policy-model
 make h1-policy-model
+make go2-policy-model
+make go2-rough-policy-model
+make go2-backflip-policy-model
 ```
 
-Go2 currently reuses the Spot policy as a temporary placeholder when selected in the app.
+Go2 backflip conversion fetches TorchScript from
+`https://github.com/tatsuya-ogawa/IsaacSim-go2-backflip` into
+`isaac_policy_sources/Go2_Policies/go2_backflip_policy.pt`.
 
 ## Build And Test
 

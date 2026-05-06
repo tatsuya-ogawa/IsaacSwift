@@ -3,9 +3,10 @@ SHELL := /bin/zsh
 POLICY_SOURCE_ROOT ?= isaac_policy_sources
 POLICY_BUILD_VENV ?= .venv-policy-build
 PRETRAINED_POLICY_RAW_BASE ?= https://raw.githubusercontent.com/tatsuya-ogawa/IsaacSim_pretrained_models/main
+GO2_BACKFLIP_POLICY_RAW_URL ?= https://raw.githubusercontent.com/tatsuya-ogawa/IsaacSim-go2-backflip/main/assets/policy.pt
 FETCH_POLICY_VARIANT ?= $(if $(POLICY_VARIANT),$(POLICY_VARIANT),all)
 
-.PHONY: help anymal-usdz spot-usdz go2-usdz h1-usdz usdz fetch-policies policy-tooling compile-policy-model policy-model spot-policy-model anymal-policy-model anymal-rough-policy-model h1-policy-model go2-policy-model go2-rough-policy-model
+.PHONY: help anymal-usdz spot-usdz go2-usdz h1-usdz usdz fetch-policies policy-tooling compile-policy-model policy-model spot-policy-model anymal-policy-model anymal-rough-policy-model h1-policy-model go2-policy-model go2-rough-policy-model go2-backflip-policy-model
 
 help:
 	@echo "Available targets:"
@@ -16,7 +17,7 @@ help:
 	@echo "  make usdz         Build anymal, spot, go2, and h1 USDZ assets"
 	@echo "  make fetch-policies        Download policy sources into $(POLICY_SOURCE_ROOT)"
 	@echo "  make policy-tooling        Create $(POLICY_BUILD_VENV) with torch and coremltools"
-	@echo "  make compile-policy-model POLICY_VARIANT=spot|anymal|anymal_rough|h1|go2|go2_rough  Build one policy bundle"
+	@echo "  make compile-policy-model POLICY_VARIANT=spot|anymal|anymal_rough|h1|go2|go2_rough|go2_backflip  Build one policy bundle"
 	@echo "  make policy-model          Fetch and build all policy bundles"
 	@echo "  make spot-policy-model     Fetch and build PolicyModels/spot_policy.mlmodelc"
 	@echo "  make anymal-policy-model   Fetch and build PolicyModels/anymal_policy.mlmodelc"
@@ -24,6 +25,7 @@ help:
 	@echo "  make h1-policy-model       Fetch and build PolicyModels/h1_policy.mlmodelc"
 	@echo "  make go2-policy-model      Fetch and build PolicyModels/go2_policy.mlmodelc"
 	@echo "  make go2-rough-policy-model Fetch and build PolicyModels/go2_rough_policy.mlmodelc"
+	@echo "  make go2-backflip-policy-model Fetch and build PolicyModels/go2_backflip_policy.mlmodelc"
 
 anymal-usdz:
 	@./scripts/usdz/package_anymal_usdz.sh
@@ -40,7 +42,7 @@ h1-usdz:
 usdz: anymal-usdz spot-usdz go2-usdz h1-usdz
 
 fetch-policies:
-	@POLICY_SOURCE_ROOT="$(POLICY_SOURCE_ROOT)" PRETRAINED_POLICY_RAW_BASE="$(PRETRAINED_POLICY_RAW_BASE)" ./scripts/policies/fetch_isaac_policy_sources.sh "$(FETCH_POLICY_VARIANT)"
+	@POLICY_SOURCE_ROOT="$(POLICY_SOURCE_ROOT)" PRETRAINED_POLICY_RAW_BASE="$(PRETRAINED_POLICY_RAW_BASE)" GO2_BACKFLIP_POLICY_RAW_URL="$(GO2_BACKFLIP_POLICY_RAW_URL)" ./scripts/policies/fetch_isaac_policy_sources.sh "$(FETCH_POLICY_VARIANT)"
 
 policy-tooling:
 	@uv venv "$(POLICY_BUILD_VENV)"
@@ -58,6 +60,7 @@ policy-model:
 	@$(MAKE) POLICY_VARIANT=h1 compile-policy-model
 	@$(MAKE) POLICY_VARIANT=go2 compile-policy-model
 	@$(MAKE) POLICY_VARIANT=go2_rough compile-policy-model
+	@$(MAKE) POLICY_VARIANT=go2_backflip compile-policy-model
 
 spot-policy-model:
 	@$(MAKE) POLICY_VARIANT=spot fetch-policies
@@ -82,3 +85,7 @@ go2-policy-model:
 go2-rough-policy-model:
 	@$(MAKE) POLICY_VARIANT=go2_rough fetch-policies
 	@$(MAKE) POLICY_VARIANT=go2_rough compile-policy-model
+
+go2-backflip-policy-model:
+	@$(MAKE) POLICY_VARIANT=go2_backflip fetch-policies
+	@$(MAKE) POLICY_VARIANT=go2_backflip compile-policy-model

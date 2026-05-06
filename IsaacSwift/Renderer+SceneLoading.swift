@@ -15,6 +15,7 @@ extension Renderer {
     class func buildRobotScene(device: MTLDevice,
                                        mtlVertexDescriptor: MTLVertexDescriptor,
                                        defaultTexture: MTLTexture,
+                                       policyRuntimeConfiguration: IsaacPolicyRuntimeConfiguration? = nil,
                                        robotKind: IsaacSwiftRobotKind) throws -> (scene: AssetScene, robotKind: IsaacSwiftRobotKind) {
         let candidates = robotKind.modelDefinition.assetCandidates
 
@@ -36,12 +37,16 @@ extension Renderer {
             }
 
             let candidateDefinition = candidate.robotKind.modelDefinition
+            let candidateRuntimeConfiguration = candidate.robotKind == robotKind ? policyRuntimeConfiguration : nil
+            let articulationProfile = Renderer.articulationProfile(for: candidate.robotKind,
+                                                                   policyRuntimeConfiguration: candidateRuntimeConfiguration)
             if let scene = try? loadScene(from: assetURL,
                                           device: device,
                                           allocator: allocator,
                                           mdlVertexDescriptor: mdlVertexDescriptor,
                                           defaultTexture: defaultTexture,
-                                          modelDefinition: candidateDefinition),
+                                          modelDefinition: candidateDefinition,
+                                          articulationProfile: articulationProfile),
                !scene.meshes.isEmpty {
                 let withGround = injectGroundPlane(into: scene,
                                                    device: device,
@@ -311,7 +316,8 @@ extension Renderer {
                                  allocator: MTKMeshBufferAllocator,
                                  mdlVertexDescriptor: MDLVertexDescriptor,
                                  defaultTexture: MTLTexture,
-                                 modelDefinition: RobotModelDefinition) throws -> AssetScene {
+                                 modelDefinition: RobotModelDefinition,
+                                 articulationProfile: RobotArticulationProfile) throws -> AssetScene {
         let asset = MDLAsset(url: assetURL, vertexDescriptor: nil, bufferAllocator: allocator)
         asset.loadTextures()
         let materialContext = MaterialTextureContext(device: device,
@@ -382,7 +388,7 @@ extension Renderer {
 
         return AssetScene(meshes: meshes,
                           nodes: articulationResolvedSceneNodes(from: nodes,
-                                                                profile: modelDefinition.articulationProfile),
+                                                                profile: articulationProfile),
                           boundsCenter: center,
                           boundsRadius: radius)
     }

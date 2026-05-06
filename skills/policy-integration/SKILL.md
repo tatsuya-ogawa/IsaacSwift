@@ -1,6 +1,6 @@
 ---
 name: isaacswift-policy-integration
-description: Use this skill when integrating, porting, tuning, or debugging Isaac Lab locomotion policies in IsaacSwift's Swift/Jolt simulator, including joint permutations, observation layout, PD gains, action scale, policy cadence, and final verification.
+description: Use this skill when integrating, porting, tuning, or debugging Isaac Lab policies in IsaacSwift's Swift/Jolt simulator, including locomotion/backflip joint permutations, observation layout, PD gains, action scale, policy cadence, and final verification.
 ---
 
 # Isaac Lab Policy → Swift / Jolt Integration Guide
@@ -16,7 +16,9 @@ local Swift + Jolt simulator in this repo. It is the post-mortem of the Spot
 >   [`IsaacSwift/IsaacSwiftPhysics.mm`](../../IsaacSwift/IsaacSwiftPhysics.mm)
 >   — Jolt-backed simulator (per-robot config tables).
 > - [`IsaacSwift/PolicyModel.swift`](../../IsaacSwift/PolicyModel.swift)
->   — `IsaacPolicyRuntimeConfiguration`, `DemoPolicyActionProvider`.
+>   — `PolicyModelConfiguration`, `DemoPolicyActionProvider`.
+> - [`IsaacSwift/RobotModelDefinitions.swift`](../../IsaacSwift/RobotModelDefinitions.swift)
+>   — `RobotPolicyKind`, `IsaacPolicyRuntimeConfiguration`.
 > - [`IsaacSwift/PolicyPhysicsLoop.swift`](../../IsaacSwift/PolicyPhysicsLoop.swift)
 >   — policy-tick orchestrator.
 > - [`IsaacSwiftTests/IsaacSwiftPhysicsTests.swift`](../../IsaacSwiftTests/IsaacSwiftPhysicsTests.swift)
@@ -33,7 +35,7 @@ either drift, oscillate, or fall over within ~1 s.
 | # | Assumption | Where it lives |
 |---|---|---|
 | **1** | The 12 (or N) actions are emitted in **PhysX `dof_names` order**, not URDF / asset declaration order. | Isaac Sim articulation traversal |
-| **2** | The observation is **`[lin_vel_b(3), ang_vel_b(3), projected_gravity_b(3), command(3), joint_pos_delta(N), joint_vel(N), prev_action(N)]`** in the same dof order. For 12-DOF quadrupeds this is 48 dims; for H1 it is 69 dims. | Isaac Lab `LocomotionVelocityRoughEnv` |
+| **2** | The observation is **`[lin_vel_b(3), ang_vel_b(3), projected_gravity_b(3), command(3), joint_pos_delta(N), joint_vel(N), prev_action(N)]`** for locomotion policies, or a task-specific layout such as Go2 backflip's 60-dim actor observation. | Isaac Lab env class |
 | **3** | Each joint runs a **PD position drive** with stiffness `Kp`, damping `Kd`, effort/velocity limits, and an **action scale** that is added to a **default standing pose**. | `spot_env.yaml` / `anymal_env.yaml` |
 | **4** | The policy is queried **once per `decimation` physics steps**, with `physics_dt` matching what the network was trained on. | `policy_controller.py` |
 
@@ -85,6 +87,7 @@ order LF / LH / RF / RH (ANYmal) or FL / FR / HL / HR (Spot)** at each depth.
 | ANYmal-C | `[LF_HAA, LH_HAA, RF_HAA, RH_HAA, LF_HFE, LH_HFE, RF_HFE, RH_HFE, LF_KFE, LH_KFE, RF_KFE, RH_KFE]` |
 | Spot    | `[fl_hx, fr_hx, hl_hx, hr_hx, fl_hy, fr_hy, hl_hy, hr_hy, fl_kn, fr_kn, hl_kn, hr_kn]` |
 | Go2 flat | `[FL_hip_joint, FR_hip_joint, RL_hip_joint, RR_hip_joint, FL_thigh_joint, FR_thigh_joint, RL_thigh_joint, RR_thigh_joint, FL_calf_joint, FR_calf_joint, RL_calf_joint, RR_calf_joint]` |
+| Go2 backflip | `[FR_hip_joint, FR_thigh_joint, FR_calf_joint, FL_hip_joint, FL_thigh_joint, FL_calf_joint, RR_hip_joint, RR_thigh_joint, RR_calf_joint, RL_hip_joint, RL_thigh_joint, RL_calf_joint]` |
 
 > **Note on ANYmal leg ordering.** The USD declares joints LF / LH / RF / RH,
 > and Isaac Lab's *default* `JointPositionAction` produces that depth order.
@@ -122,6 +125,7 @@ Used in **two places** inside `DemoPolicyActionProvider`:
 | ANYmal-C | `[0, 4, 8,   2, 6, 10,   1, 5, 9,   3, 7, 11]` |
 | Spot     | `[0, 4, 8,   1, 5, 9,    2, 6, 10,   3, 7, 11]` |
 | Go2 flat | `[0, 4, 8,   1, 5, 9,    2, 6, 10,   3, 7, 11]` |
+| Go2 backflip | `[3, 4, 5,   0, 1, 2,    9, 10, 11,  6, 7, 8]` |
 | H1       | `[0, 1, 2,   3, 7, 11, 15,   4, 8, 12, 16,   5, 6,   9, 13, 17,   10, 14, 18]` |
 
 These policies are type-grouped by joint depth, but their bundled exports do
@@ -134,6 +138,7 @@ This is locked in by:
 - [`anymalSimToPolicyPermutationMatchesPhysXDofOrder()`](../../IsaacSwiftTests/IsaacSwiftTests.swift)
 - [`spotSimToPolicyPermutationMatchesPhysXDofOrder()`](../../IsaacSwiftTests/IsaacSwiftTests.swift)
 - [`go2SimToPolicyPermutationMatchesIsaacLabActionOrder()`](../../IsaacSwiftTests/IsaacSwiftTests.swift)
+- [`go2BackflipSimToPolicyPermutationMatchesIsaacTaskOrder()`](../../IsaacSwiftTests/IsaacSwiftTests.swift)
 - [`h1SimToPolicyPermutationMatchesFlatTerrainDofOrder()`](../../IsaacSwiftTests/IsaacSwiftTests.swift)
 - [`simToPolicyJointPermutationsAreValidBijections()`](../../IsaacSwiftTests/IsaacSwiftTests.swift)
 
@@ -310,7 +315,86 @@ For real rough terrain parity, replace that constant fill with the same 17x11
 yaw-aligned grid used by Isaac Lab and sample the local terrain height at each
 ray point.
 
-### 4.4 Unitree H1 — `kH1Config` / `IsaacPolicyRuntimeConfiguration.h1Flat`
+### 4.4 Unitree Go2 backflip — `IsaacPolicyRuntimeConfiguration.go2Backflip`
+
+The IsaacSim Go2 backflip task is not a locomotion-velocity policy. Treat it
+as a task-specific finite-horizon controller:
+
+| Parameter | Value | Source |
+|---|---|---|
+| `physics_dt` | `1/200 s` | `env.yaml` `sim.dt = 0.005` |
+| `decimation` | `4` (policy at 50 Hz) | `env.yaml` |
+| Episode length | **2.0 s** | `Go2BackflipIsaacEnvCfg.episode_length_s` |
+| `action_scale` | **0.5** | `Go2BackflipIsaacEnvCfg.action_scale` |
+| Isaac source drive path | task-side PD torque | `_apply_action()` |
+| IsaacSwift Jolt drive path | position motor approximation | trace-fit plus local visual tuning |
+| Isaac source `kp` / `kd` | **70.0 / 3.0** | `Go2BackflipIsaacEnvCfg.kp/kd` |
+| IsaacSwift runtime `kp` / `kd` | **70.0 / 4.5** | best trace-fit candidate |
+| Torque clamp | **23.7 N.m** | `effort_limit_sim` |
+| Jolt motor torque limit | **21.0 N.m** | local visual stability tuning |
+| Isaac source spawn z | **0.32 m** | `base_init_height` |
+| IsaacSwift runtime spawn z | **0.34 m** | best trace-fit candidate |
+| Default joint pose | `[0,0.8,-1.5, 0,0.8,-1.5, 0,1.0,-1.5, 0,1.0,-1.5]` | `env.yaml` `robot.init_state.joint_pos` |
+| Observation shape | 60 | actor policy export |
+| `simToPolicy` | `[3,4,5, 0,1,2, 9,10,11, 6,7,8]` | `ISAAC_JOINT_ORDER` |
+
+Actor observation layout:
+
+```text
+[0:3]   root_ang_vel_b * 0.25
+[3:6]   projected_gravity_b
+[6:18]  joint_pos - default_pos
+[18:30] joint_vel * 0.05
+[30:42] actions
+[42:54] last_actions
+[54:60] sin/cos phase features
+```
+
+The task uses `action_latency=True`: at policy tick `t`, `_actions` receives
+the newly predicted policy output, but `_exec_actions` applies the previous
+tick's policy output. In IsaacSwift this is handled inside
+`DemoPolicyActionProvider`: `go2_backflip_policy` observes both current and
+last policy actions in policy order, while returning the delayed action in sim
+order to the Jolt drive.
+
+The local Jolt backflip runtime uses a position-motor approximation, not the
+Isaac task's direct torque application. Keep the policy/observation trace
+checks separate from this drive approximation when debugging. The current
+runtime spawn/damping values came from `tmp/play_trace/play_trace.csv` trace
+fitting; the torque limit is the local visual-stability value:
+
+```text
+spawnZ=0.340 kp=70.0 kd=4.5 maxTorque=21.00 actionScale=0.5
+```
+
+With the 21 N.m torque cap, do not make the headless smoke test require
+`endBaseUprightZ` at exactly 2.0 s. The Isaac task horizon is 2.0 s, but the
+Jolt position-motor approximation can still be completing the flip at that
+instant when torque is reduced. The normal non-diagnostic test should verify
+finite rollout, lift, and meaningful joint motion; use trace-fit diagnostics or
+visual review for landing timing.
+
+To rerun the diagnostic locally, stage the play trace as
+`tmp/play_trace/play_trace.csv`, build for testing, copy that CSV into the test
+bundle as `go2_backflip_play_trace.csv`, create
+`tmp/.go2_backflip_trace_fit`, then run the physics tests without rebuilding.
+The Xcode test app is sandboxed, so do not rely on reading the repo `tmp`
+directory directly from the test process. Remove the marker after the run. The
+diagnostic writes and prints the top `Go2 backflip trace-fit candidates`; keep
+the marker out of normal test runs.
+
+Build the CoreML bundle from the GitHub TorchScript source:
+
+```bash
+make go2-backflip-policy-model
+```
+
+This fetches `assets/policy.pt` from
+`https://github.com/tatsuya-ogawa/IsaacSim-go2-backflip` into
+`isaac_policy_sources/Go2_Policies/go2_backflip_policy.pt`, then compiles it
+to `PolicyModels/go2_backflip_policy.mlmodelc`.
+
+### 4.5 Unitree H1 — `kH1Config` / `IsaacPolicyRuntimeConfiguration.h1Flat`
 
 | Parameter | Value | Source |
 |---|---|---|
@@ -586,6 +670,10 @@ Before calling a policy/physics fix complete, run these checks in this order:
    - For H1, require at least 1 m forward progress over 10 s and verify both
      ankle joints have non-trivial range.
    - For Spot/ANYmal, require forward progress plus upright/base-height checks.
+   - For finite-horizon skills such as Go2 backflip, verify the custom
+     observation layout, action-latency behavior, drive-path selection,
+     IsaacSim default joint pose, episode reset timing, and a measurable
+     lift impulse before judging the on-screen motion.
 5. Restore broader coverage.
    - Re-enable Spot, ANYmal, and diagnostics that were skipped during H1-only
      debugging.
