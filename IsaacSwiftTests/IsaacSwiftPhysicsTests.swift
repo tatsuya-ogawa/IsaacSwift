@@ -391,7 +391,9 @@ struct IsaacSwiftPhysicsTests {
         let provider = DemoPolicyActionProvider(runner: runner,
                                                 configuration: cfg,
                                                 command: SIMD3<Float>(0, 0, 0))
-        let loop = PolicyPhysicsLoop(robotKind: cfg.robotKind, provider: provider)
+        let loop = PolicyPhysicsLoop(robotKind: cfg.robotKind,
+                                     configuration: cfg,
+                                     provider: provider)
         loop.reset()
         let stats = runLoop(loop, seconds: 3.0)
 
@@ -566,6 +568,42 @@ struct IsaacSwiftPhysicsTests {
                 "base dropped to z=\(stats.minBaseZ) — Spot is collapsing")
         #expect(stats.endBasePos.x > 1.5,
                 "x displacement was only \(stats.endBasePos.x)m for a 4 s rollout at 0.8 m/s")
+    }
+
+    @Test func go2FlatRuntimeMatchesIsaacLabActuatorSettings() {
+        let sim = IsaacSwiftAnymalSimulator(robotKind: .go2, physicsTimeStep: 1.0 / 200.0)
+        #expect(abs(sim.jointStiffness - 25.0) <= 0.001)
+        #expect(abs(sim.jointDamping - 0.5) <= 0.001)
+        #expect(abs(sim.maxJointTorque - 23.5) <= 0.001)
+        #expect(abs(sim.recommendedActionScale - 0.25) <= 0.001)
+        #expect(abs(sim.motorTargetSmoothingTau) <= 0.001)
+        #expect(abs(IsaacPolicyRuntimeConfiguration.go2.defaultCommand.x - 0.8) <= 0.001)
+    }
+
+    @Test func go2FlatCoreMLPolicyWalksForwardOnFlatGround() throws {
+        let configuration = PolicyModelConfiguration.go2Flat
+        guard PolicyModelRunner.bundledModelURL(configuration: configuration) != nil ||
+              PolicyModelRunner.repositoryModelURL(configuration: configuration).map({ FileManager.default.fileExists(atPath: $0.path) }) == true
+        else { return }
+
+        let runner = try PolicyModelRunner(configuration: configuration)
+        let config = IsaacPolicyRuntimeConfiguration.go2
+        let provider = DemoPolicyActionProvider(runner: runner,
+                                                configuration: config,
+                                                command: SIMD3<Float>(0.8, 0, 0))
+        let loop = PolicyPhysicsLoop(robotKind: config.robotKind, provider: provider)
+        loop.reset()
+
+        let stats = runLoop(loop, seconds: 4.0)
+
+        #expect(!stats.sawNaN)
+        #expect(stats.minBaseUprightZ > 0.90,
+                "uprightZ dipped to \(stats.minBaseUprightZ) — Go2 is tipping")
+        #expect(stats.minBaseZ > 0.05,
+                "base dropped to z=\(stats.minBaseZ) — Go2 is collapsing")
+        #expect(stats.endBasePos.x > 1.5,
+                "x displacement was only \(stats.endBasePos.x)m for a 4 s rollout at 0.8 m/s")
+        #expect(stats.maxAbsJointVelocity < 120.0)
     }
 
     // MARK: - Spot joint-permutation + gain search
@@ -1135,6 +1173,36 @@ struct IsaacSwiftPhysicsTests {
         }
         #expect(min(result.minJointDeltas[2], result.minJointDeltas[5]) < -0.02,
                 "front KFE joints never reached forward-swing deltas")
+    }
+
+    @Test func anymalRoughCoreMLPolicyWalksForwardOnFlatGround() throws {
+        let configuration = PolicyModelConfiguration.anymalRough
+        guard PolicyModelRunner.bundledModelURL(configuration: configuration) != nil ||
+              PolicyModelRunner.repositoryModelURL(configuration: configuration).map({ FileManager.default.fileExists(atPath: $0.path) }) == true
+        else { return }
+
+        let runner = try PolicyModelRunner(configuration: configuration)
+        let cfg = IsaacPolicyRuntimeConfiguration.anymalRough
+        let provider = DemoPolicyActionProvider(runner: runner,
+                                                configuration: cfg)
+        let loop = PolicyPhysicsLoop(robotKind: cfg.robotKind,
+                                     configuration: cfg,
+                                     provider: provider)
+        #expect(abs(loop.simulator.motorTargetSmoothingTau) <= 0.001)
+        #expect(abs(loop.simulator.spawnPositionWorld.z - 0.70) <= 0.001)
+        loop.reset()
+        #expect(loop.simulator.jointActuator != nil,
+                "ANYmal rough runtime loop did not install AnymalActuatorRunner")
+
+        let result = runLoop(loop, seconds: 10.0)
+
+        #expect(!result.sawNaN)
+        #expect(result.minBaseUprightZ > 0.85,
+                "uprightZ dipped to \(result.minBaseUprightZ) — ANYmal rough is tipping")
+        #expect(result.minBaseZ > 0.30,
+                "base dropped to z=\(result.minBaseZ) — ANYmal rough is collapsing")
+        #expect(result.endBasePos.x > 1.0,
+                "x displacement was only \(result.endBasePos.x)m over 10 s — ANYmal rough is not advancing enough")
     }
 
     @Test func h1CoreMLPolicyStaysUprightOnFlatGround() throws {

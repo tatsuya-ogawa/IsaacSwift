@@ -83,8 +83,8 @@ typedef NS_ENUM(NSInteger, IsaacSwiftRobotKind) {
 /// Time-constant (seconds) for the EMA low-pass on motor target angles. The
 /// commanded target is filtered with `alpha = dt / (tau + dt)` per substep.
 /// This approximates SEA / actuator-network smoothing of the policy output.
-/// Default is 8 ms for quadruped PD paths and 0 ms for H1, matching Isaac
-/// Sim's direct per-step `ArticulationAction(joint_positions=...)` path.
+/// Default is 8 ms for Spot/ANYmal paths and 0 ms for Go2/H1 direct
+/// per-step `ArticulationAction(joint_positions=...)` paths.
 @property (nonatomic, assign)   float motorTargetSmoothingTau;
 /// Recommended `action_scale` for this robot's local Jolt-backed policy loop.
 /// The policy loop multiplies raw policy outputs by this value before treating

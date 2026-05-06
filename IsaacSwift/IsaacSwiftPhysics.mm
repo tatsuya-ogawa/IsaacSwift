@@ -239,15 +239,15 @@ static const RobotConfig kSpotConfig = {
 };
 
 // Unitree Go2 config — seeded from Isaac Sim 5.1 `Unitree/Go2/go2.usd`.
-// The policy is currently a placeholder, so the PD gains are conservative
-// Jolt-local values while effort limits and dimensions follow the USD.
+// This is a direct position policy: policy output is scaled by 0.25 and
+// added to the default joint pose, then driven through the hinge motor.
 static const RobotConfig kGo2Config = {
     /*jointCount=*/kQuadrupedJointCount,
     /*baseHalfX=*/0.1881f, /*baseHalfY=*/0.04675f, /*baseHalfZ=*/0.057f,
     /*baseMass=*/6.921f, /*baseFriction=*/0.6f,
     /*hipOffsetX=*/0.1934f, /*hipOffsetY=*/0.0465f,
     /*hipLinkHalf=*/0.035f, /*hipLinkMass=*/0.678f, /*hipFriction=*/0.5f,
-    /*hfeOffsetX=*/0.0f, /*hfeOffsetY=*/0.0f, /*hfeOffsetZ=*/0.0f,
+    /*hfeOffsetX=*/0.0f, /*hfeOffsetY=*/0.0955f, /*hfeOffsetZ=*/0.0f,
     /*thighLength=*/0.213f, /*thighRadius=*/0.026f,
     /*thighMass=*/1.152f, /*thighFriction=*/0.6f,
     /*kfeOffsetX=*/0.0f,
@@ -256,7 +256,7 @@ static const RobotConfig kGo2Config = {
     /*footMass=*/0.0f, /*footOffsetX=*/0.0f,
     /*footOffsetY=*/0.0f, /*footOffsetZ=*/0.0f,
     /*shankFriction=*/1.2f,
-    /*kp=*/120.0f, /*kd=*/6.0f, /*maxTorque=*/45.43f, /*actionScale=*/0.25f,
+    /*kp=*/25.0f, /*kd=*/0.5f, /*maxTorque=*/23.5f, /*actionScale=*/0.25f,
     /*physicsTimeStep=*/1.0f / 200.0f,
     /*spawnZ=*/0.42f,
     /*defaults=*/{{
@@ -771,7 +771,12 @@ static std::array<UsdBodyPose, kH1BodyCount> MakeH1BodyPoses(const std::array<fl
     return poses;
 }
 
-static JPH::Vec3 HipToHfeOffset(const RobotConfig &cfg, const LegConfig &leg) {
+static JPH::Vec3 HipToHfeOffset(IsaacSwiftRobotKind kind, const RobotConfig &cfg, const LegConfig &leg) {
+    if (kind == IsaacSwiftRobotKindGo2) {
+        const float side = (leg.hipY >= 0.0f) ? 1.0f : -1.0f;
+        return JPH::Vec3(cfg.hfeOffsetX, side * cfg.hfeOffsetY, cfg.hfeOffsetZ);
+    }
+
     // IsaacSim's ANYmal USD places the HFE joint off the HAA pivot instead of
     // co-locating both hip axes. The lateral sign alternates by diagonal pair.
     const float side = (leg.hipX * leg.hipY > 0.0f) ? -1.0f : 1.0f;
@@ -904,9 +909,10 @@ struct AnymalSimState {
     _jointStiffness  = _config.kp;
     _jointDamping    = _config.kd;
     _maxJointTorque  = _config.maxTorque;
-    _motorTargetSmoothingTau = (robotKind == IsaacSwiftRobotKindH1)
+    _motorTargetSmoothingTau = (robotKind == IsaacSwiftRobotKindH1 ||
+                                robotKind == IsaacSwiftRobotKindGo2)
         ? 0.0f
-        : 0.008f;  // 8 ms — Spot/Isaac Lab default.
+        : 0.008f;  // 8 ms — Spot/ANYmal local actuator smoothing.
     _spawnPosition   = simd_make_float3(0.0f, 0.0f, _config.spawnZ);
 
     NSMutableArray<NSNumber *> *defaults = [NSMutableArray arrayWithCapacity:_config.jointCount];
@@ -1446,7 +1452,7 @@ struct AnymalSimState {
         }
 
         const JPH::Quat haaQ = JPH::Quat::sRotation(JPH::Vec3(1, 0, 0), haaDef);
-        const JPH::Vec3 hipToHfe = HipToHfeOffset(cfg, leg);
+        const JPH::Vec3 hipToHfe = HipToHfeOffset(_robotKind, cfg, leg);
         const JPH::RVec3 hfePivot = hipPivot + JPH::RVec3(haaQ * hipToHfe);
         const JPH::Quat hfeQ = JPH::Quat::sRotation(JPH::Vec3(0, 1, 0), hfeDef);
         const JPH::Quat thighRot = haaQ * hfeQ;
@@ -1598,7 +1604,7 @@ struct AnymalSimState {
 
         const JPH::RVec3 hipPivot(spawn.GetX() + leg.hipX, spawn.GetY() + leg.hipY, spawn.GetZ());
         const JPH::Quat haaQ = JPH::Quat::sRotation(JPH::Vec3(1, 0, 0), haaDef);
-        const JPH::Vec3 hipToHfe = HipToHfeOffset(cfg, leg);
+        const JPH::Vec3 hipToHfe = HipToHfeOffset(_robotKind, cfg, leg);
         const JPH::RVec3 hfePivot = hipPivot + JPH::RVec3(haaQ * hipToHfe);
         const JPH::Quat hfeQ = JPH::Quat::sRotation(JPH::Vec3(0, 1, 0), hfeDef);
         const JPH::Quat kfeQ = JPH::Quat::sRotation(JPH::Vec3(0, 1, 0), kfeDef);
@@ -1706,8 +1712,8 @@ struct AnymalSimState {
         preAngles[i] = _state->hinges[i]->GetCurrentAngle();
     }
 
-    // EMA smoothing constant. H1 sets this to zero because Isaac Sim applies
-    // each direct position target immediately at the 200 Hz physics rate.
+    // EMA smoothing constant. Go2 and H1 set this to zero because Isaac Lab
+    // applies each direct position target immediately at the physics rate.
     const float kTau = MAX(_motorTargetSmoothingTau, 0.0f);
     const float dt   = static_cast<float>(_physicsTimeStep);
     const float alpha = (kTau > 0.0f) ? dt / (kTau + dt) : 1.0f;

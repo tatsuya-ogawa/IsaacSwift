@@ -53,6 +53,7 @@ class Renderer: NSObject, MTKViewDelegate {
     @MainActor
     init?(metalKitView: MTKView,
           policyActionProvider: PolicyActionProvider? = nil,
+          policyRuntimeConfiguration: IsaacPolicyRuntimeConfiguration? = nil,
           robotKind: IsaacSwiftRobotKind = .anymalC) {
 #if targetEnvironment(simulator)
         return nil
@@ -62,7 +63,9 @@ class Renderer: NSObject, MTKViewDelegate {
         }
 
         self.device = device
+        let runtimeConfiguration = policyRuntimeConfiguration ?? IsaacPolicyRuntimeConfiguration.configuration(for: robotKind)
         self.policyPhysicsLoop = PolicyPhysicsLoop(robotKind: robotKind,
+                                                   configuration: runtimeConfiguration,
                                                    provider: policyActionProvider)
         self.displayedPolicyActions = []
         self.commandQueue = device.makeMTL4CommandQueue()!
@@ -371,4 +374,3 @@ class Renderer: NSObject, MTKViewDelegate {
                                                          farZ: max(modelRadius * 12.0, 100.0))
     }
 }
-

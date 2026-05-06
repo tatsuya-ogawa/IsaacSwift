@@ -15,7 +15,8 @@ import simd
 /// The contract mirrors Isaac Sim's ANYmal velocity controller:
 /// * ANYmal-C: `physics_dt = 1/200`, `decimation = 4`
 /// * Spot Flat: `physics_dt = 1/500`, `decimation = 10`
-/// * policy runs at 50 Hz for both
+/// * Go2 Flat: `physics_dt = 1/200`, `decimation = 4`
+/// * policy runs at 50 Hz for all of the above
 /// * direct position policies use the simulator's hinge position motor
 /// * learned actuator policies disable the hinge motor and apply effort
 final class PolicyPhysicsLoop {
@@ -55,6 +56,7 @@ final class PolicyPhysicsLoop {
         self.configuration = configuration
         self.simulator = simulator
         self.provider = provider
+        Self.applyRuntimeOverrides(on: simulator, configuration: configuration)
         let zero = Array(repeating: Float(0), count: Int(simulator.jointCount))
         self.lastJointDeltas = zero
         self.lastRawActions = zero
@@ -66,9 +68,28 @@ final class PolicyPhysicsLoop {
     convenience init(robotKind: IsaacSwiftRobotKind,
                      provider: PolicyActionProvider?) {
         let configuration = IsaacPolicyRuntimeConfiguration.configuration(for: robotKind)
+        self.init(robotKind: robotKind, configuration: configuration, provider: provider)
+    }
+
+    /// Builds a fresh simulator for `robotKind` while running the selected
+    /// policy runtime. The caller is responsible for passing a compatible
+    /// robot/policy pair from `RobotPolicySelection`.
+    convenience init(robotKind: IsaacSwiftRobotKind,
+                     configuration: IsaacPolicyRuntimeConfiguration,
+                     provider: PolicyActionProvider?) {
         let sim = IsaacSwiftAnymalSimulator(robotKind: robotKind,
                                             physicsTimeStep: configuration.physicsTimeStep)
         self.init(simulator: sim, configuration: configuration, provider: provider)
+    }
+
+    private static func applyRuntimeOverrides(on simulator: IsaacSwiftAnymalSimulator,
+                                              configuration: IsaacPolicyRuntimeConfiguration) {
+        guard configuration == .anymalRough else { return }
+        // Isaac Lab's rough direct ANYmal export starts on terrain origins
+        // that place the root around z=0.70, and its ActuatorNetLSTM already
+        // models actuator dynamics. Do not add the local target EMA again.
+        simulator.spawnPositionWorld = SIMD3<Float>(0, 0, 0.70)
+        simulator.motorTargetSmoothingTau = 0
     }
 
     /// For ANYmal-C we pair the simulator with the bundled ANYdrive
@@ -77,7 +98,9 @@ final class PolicyPhysicsLoop {
     /// -> effort. Other robot kinds use the direct position-motor path.
     private static func installDefaultActuator(on simulator: IsaacSwiftAnymalSimulator,
                                                configuration: IsaacPolicyRuntimeConfiguration) {
-        guard configuration.robotKind == .anymalC, simulator.jointActuator == nil else { return }
+        guard simulator.robotKind == .anymalC,
+              configuration.robotKind == .anymalC,
+              simulator.jointActuator == nil else { return }
         let actuator: AnymalActuatorRunner
         do {
             actuator = try AnymalActuatorRunner(bundle: .main)
@@ -199,7 +222,8 @@ final class PolicyPhysicsLoop {
             demo.updateJointState(positionDeltas: positions, velocities: velocities)
             demo.updateBaseFeedback(linearVelocityBody: observation.baseLinearVelocityBody,
                                     angularVelocityBody: observation.baseAngularVelocityBody,
-                                    projectedGravityBody: observation.gravityDirectionBody)
+                                    projectedGravityBody: observation.gravityDirectionBody,
+                                    basePositionWorld: observation.basePositionWorld)
         } else {
             let positions = observation.jointPositionDeltas.map { $0.floatValue }
             provider.updateJointFeedback(positions, at: time)

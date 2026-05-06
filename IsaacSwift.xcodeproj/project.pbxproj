@@ -9,6 +9,9 @@
 /* Begin PBXBuildFile section */
 		4C414E59414354303005 /* PolicyModels/anymal_actuator.mlmodelc in Resources */ = {isa = PBXBuildFile; fileRef = 4C414E59414354303006 /* PolicyModels/anymal_actuator.mlmodelc */; };
 		4C414E594D4C303031000001 /* PolicyModels/anymal_policy.mlmodelc in Resources */ = {isa = PBXBuildFile; fileRef = 4C414E594D4C303031000003 /* PolicyModels/anymal_policy.mlmodelc */; };
+		4C414E59524F554748000001 /* PolicyModels/anymal_rough_policy.mlmodelc in Resources */ = {isa = PBXBuildFile; fileRef = 4C414E59524F554748000003 /* PolicyModels/anymal_rough_policy.mlmodelc */; };
+		4C474F324D4C303031000001 /* PolicyModels/go2_policy.mlmodelc in Resources */ = {isa = PBXBuildFile; fileRef = 4C474F324D4C303031000003 /* PolicyModels/go2_policy.mlmodelc */; };
+		4C474F32524F554748000001 /* PolicyModels/go2_rough_policy.mlmodelc in Resources */ = {isa = PBXBuildFile; fileRef = 4C474F32524F554748000003 /* PolicyModels/go2_rough_policy.mlmodelc */; };
 		4C48314D4C303031000001 /* PolicyModels/h1_policy.mlmodelc in Resources */ = {isa = PBXBuildFile; fileRef = 4C48314D4C303031000003 /* PolicyModels/h1_policy.mlmodelc */; };
 		4C53504F544D303031000002 /* PolicyModels/spot_policy.mlmodelc in Resources */ = {isa = PBXBuildFile; fileRef = 4C53504F544D303031000004 /* PolicyModels/spot_policy.mlmodelc */; };
 /* End PBXBuildFile section */
@@ -36,6 +39,9 @@
 		09DF0D382FA1900B00063225 /* IsaacSwiftUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = IsaacSwiftUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4C414E59414354303006 /* PolicyModels/anymal_actuator.mlmodelc */ = {isa = PBXFileReference; explicitFileType = folder; includeInIndex = 0; path = PolicyModels/anymal_actuator.mlmodelc; sourceTree = SOURCE_ROOT; };
 		4C414E594D4C303031000003 /* PolicyModels/anymal_policy.mlmodelc */ = {isa = PBXFileReference; explicitFileType = folder; includeInIndex = 0; path = PolicyModels/anymal_policy.mlmodelc; sourceTree = SOURCE_ROOT; };
+		4C414E59524F554748000003 /* PolicyModels/anymal_rough_policy.mlmodelc */ = {isa = PBXFileReference; explicitFileType = folder; includeInIndex = 0; path = PolicyModels/anymal_rough_policy.mlmodelc; sourceTree = SOURCE_ROOT; };
+		4C474F324D4C303031000003 /* PolicyModels/go2_policy.mlmodelc */ = {isa = PBXFileReference; explicitFileType = folder; includeInIndex = 0; path = PolicyModels/go2_policy.mlmodelc; sourceTree = SOURCE_ROOT; };
+		4C474F32524F554748000003 /* PolicyModels/go2_rough_policy.mlmodelc */ = {isa = PBXFileReference; explicitFileType = folder; includeInIndex = 0; path = PolicyModels/go2_rough_policy.mlmodelc; sourceTree = SOURCE_ROOT; };
 		4C48314D4C303031000003 /* PolicyModels/h1_policy.mlmodelc */ = {isa = PBXFileReference; explicitFileType = folder; includeInIndex = 0; path = PolicyModels/h1_policy.mlmodelc; sourceTree = SOURCE_ROOT; };
 		4C53504F544D303031000004 /* PolicyModels/spot_policy.mlmodelc */ = {isa = PBXFileReference; explicitFileType = folder; includeInIndex = 0; path = PolicyModels/spot_policy.mlmodelc; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
@@ -103,9 +109,12 @@
 				09DF0D312FA1900B00063225 /* IsaacSwiftTests */,
 				09DF0D3B2FA1900B00063225 /* IsaacSwiftUITests */,
 				4C414E594D4C303031000003 /* PolicyModels/anymal_policy.mlmodelc */,
+				4C414E59524F554748000003 /* PolicyModels/anymal_rough_policy.mlmodelc */,
 				4C414E59414354303006 /* PolicyModels/anymal_actuator.mlmodelc */,
 				4C53504F544D303031000004 /* PolicyModels/spot_policy.mlmodelc */,
 				4C48314D4C303031000003 /* PolicyModels/h1_policy.mlmodelc */,
+				4C474F324D4C303031000003 /* PolicyModels/go2_policy.mlmodelc */,
+				4C474F32524F554748000003 /* PolicyModels/go2_rough_policy.mlmodelc */,
 				09DF0D172FA1900A00063225 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -241,9 +250,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				4C414E594D4C303031000001 /* PolicyModels/anymal_policy.mlmodelc in Resources */,
+				4C414E59524F554748000001 /* PolicyModels/anymal_rough_policy.mlmodelc in Resources */,
 				4C414E59414354303005 /* PolicyModels/anymal_actuator.mlmodelc in Resources */,
 				4C53504F544D303031000002 /* PolicyModels/spot_policy.mlmodelc in Resources */,
 				4C48314D4C303031000001 /* PolicyModels/h1_policy.mlmodelc in Resources */,
+				4C474F324D4C303031000001 /* PolicyModels/go2_policy.mlmodelc in Resources */,
+				4C474F32524F554748000001 /* PolicyModels/go2_rough_policy.mlmodelc in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -49,7 +49,7 @@ each action ended up driving the wrong joint and the robot fell over instantly.
 
 ### 2.1 Local Jolt simulator (sim order, leg-major)
 
-Both ANYmal-C and Spot share the topology in
+ANYmal-C, Spot, and Go2 share the quadruped topology in
 [`IsaacSwiftPhysics.mm`](../../IsaacSwift/IsaacSwiftPhysics.mm) and use the **same
 indexing**:
 
@@ -70,6 +70,8 @@ Concretely:
 
 (For Spot, replace `*_HAA / *_HFE / *_KFE` with `*_hx / *_hy / *_kn` and the
 leg labels become lower-case `fl, fr, hl, hr`.)
+For Go2, use `*_hip_joint / *_thigh_joint / *_calf_joint` with leg labels
+`FL, FR, RL, RR`.
 
 ### 2.2 Isaac Sim / PhysX dof_names (policy order)
 
@@ -80,16 +82,14 @@ order LF / LH / RF / RH (ANYmal) or FL / FR / HL / HR (Spot)** at each depth.
 
 | Robot | Policy order (`dof_names`) |
 |---|---|
-| ANYmal-C | `[LF_HAA, RF_HAA, LH_HAA, RH_HAA, LF_HFE, RF_HFE, LH_HFE, RH_HFE, LF_KFE, RF_KFE, LH_KFE, RH_KFE]` |
+| ANYmal-C | `[LF_HAA, LH_HAA, RF_HAA, RH_HAA, LF_HFE, LH_HFE, RF_HFE, RH_HFE, LF_KFE, LH_KFE, RF_KFE, RH_KFE]` |
 | Spot    | `[fl_hx, fr_hx, hl_hx, hr_hx, fl_hy, fr_hy, hl_hy, hr_hy, fl_kn, fr_kn, hl_kn, hr_kn]` |
+| Go2 flat | `[FL_hip_joint, FR_hip_joint, RL_hip_joint, RR_hip_joint, FL_thigh_joint, FR_thigh_joint, RL_thigh_joint, RR_thigh_joint, FL_calf_joint, FR_calf_joint, RL_calf_joint, RR_calf_joint]` |
 
 > **Note on ANYmal leg ordering.** The USD declares joints LF / LH / RF / RH,
-> and Isaac Lab's *default* `JointPositionAction` would produce that depth
-> order. The bundled CoreML policy here was trained with a different
-> ordering — type-grouped LF / RF / LH / RH at every depth (the same shape
-> as Spot). Confirmed empirically by
-> `anymalPolicyJointPermutationAndGainSweep` over a 600-point grid: only
-> the LF-RF-LH-RH permutation keeps the robot upright.
+> and Isaac Lab's *default* `JointPositionAction` produces that depth order.
+> The bundled CoreML policy here is locked to the same LF-LH-RF-RH order by
+> `anymalPolicyJointPermutationAndGainSweep`.
 
 > Verify on Linux with:
 > ```python
@@ -121,16 +121,19 @@ Used in **two places** inside `DemoPolicyActionProvider`:
 |---|---|
 | ANYmal-C | `[0, 4, 8,   2, 6, 10,   1, 5, 9,   3, 7, 11]` |
 | Spot     | `[0, 4, 8,   1, 5, 9,    2, 6, 10,   3, 7, 11]` |
+| Go2 flat | `[0, 4, 8,   1, 5, 9,    2, 6, 10,   3, 7, 11]` |
 | H1       | `[0, 1, 2,   3, 7, 11, 15,   4, 8, 12, 16,   5, 6,   9, 13, 17,   10, 14, 18]` |
 
-Both policies are type-grouped by joint depth, but their bundled exports do
-not use the same leg order: ANYmal-C is LF-LH-RF-RH, while Spot is
-FL-FR-HL-HR. Do not infer this from the local sim order; pin it from the
-actual exported policy / Isaac Sim controller and lock it with tests.
+These policies are type-grouped by joint depth, but their bundled exports do
+not all use the same leg labels or leg order: ANYmal-C is LF-LH-RF-RH, while
+Spot and Go2 are FL/FR/RL(or HL)/RR(or HR). Do not infer this from the local
+sim order; pin it from the actual exported policy / Isaac Sim controller and
+lock it with tests.
 This is locked in by:
 
 - [`anymalSimToPolicyPermutationMatchesPhysXDofOrder()`](../../IsaacSwiftTests/IsaacSwiftTests.swift)
 - [`spotSimToPolicyPermutationMatchesPhysXDofOrder()`](../../IsaacSwiftTests/IsaacSwiftTests.swift)
+- [`go2SimToPolicyPermutationMatchesIsaacLabActionOrder()`](../../IsaacSwiftTests/IsaacSwiftTests.swift)
 - [`h1SimToPolicyPermutationMatchesFlatTerrainDofOrder()`](../../IsaacSwiftTests/IsaacSwiftTests.swift)
 - [`simToPolicyJointPermutationsAreValidBijections()`](../../IsaacSwiftTests/IsaacSwiftTests.swift)
 
@@ -217,7 +220,97 @@ must match the runtime configuration, asserted by
 > parent/child torque pair. The simulator's PD gains are only the fallback
 > path used when no actuator is installed.
 
-### 4.3 Unitree H1 — `kH1Config` / `IsaacPolicyRuntimeConfiguration.h1Flat`
+ANYmal-C rough direct uses the same ActuatorNetLSTM path, but the exported
+policy actor is still an MLP. Keep these pieces separate:
+
+| Parameter | Value | Source |
+|---|---|---|
+| Policy bundle | `PolicyModels/anymal_rough_policy.mlmodelc` | exported `anymal_rough_policy.pt` |
+| Observation shape | 235 | `Isaac-Velocity-Rough-Anymal-C-Direct-Play-v0` |
+| Observation layout | `[0:36]` state, `[36:223]` height scan, `[223:235]` previous action | exported play data |
+| `default_command` | `(0.8, 0, 0)` m/s | rough play-data command |
+| Runtime spawn z | **0.70 m** | rough play-data initial `root_pos_w.z` |
+| Target smoothing | **0 ms** | the ActuatorNetLSTM already models actuator dynamics |
+
+Do not reuse the Go2 rough layout for ANYmal rough. Go2 stores
+`previous_action` at `[36:48]` and appends height scan after it; ANYmal rough
+stores height scan first and puts `previous_action` at `[223:235]`.
+
+`make POLICY_VARIANT=anymal_rough fetch-policies` downloads the source
+TorchScript and parameter YAMLs from
+`https://github.com/tatsuya-ogawa/IsaacSim_pretrained_models`, mapping
+`anymal_c_rough_direct/exported/policy.pt` to
+`isaac_policy_sources/Anymal_Policies/anymal_rough_policy.pt`.
+
+### 4.3 Unitree Go2 flat — `kGo2Config` / `IsaacPolicyRuntimeConfiguration.go2`
+
+| Parameter | Value | Source |
+|---|---|---|
+| `physics_dt` | `1/200 s` | `env.yaml` `sim.dt = 0.005` |
+| `decimation` | `4` (policy at 50 Hz) | `env.yaml` |
+| `kp` / `kd` | **25.0 / 0.5** | Isaac Lab `DCMotor` |
+| `max_torque` | **23.5** N·m | Isaac Lab `DCMotor.effort_limit` |
+| `action_scale` | **0.25** | Isaac Lab `JointPositionAction.scale` |
+| `default_command` | `(0.8, 0, 0)` m/s | flat play-data command |
+| `spawn_z` | **0.42 m** | local Jolt spawn, near Isaac Lab `init_state.pos = 0.40` |
+| Default pose | `[+0.1,0.8,-1.5; -0.1,0.8,-1.5; +0.1,1.0,-1.5; -0.1,1.0,-1.5]` (FL,FR,RL,RR) | `env.yaml` `init_state.joint_pos` |
+| Hip→thigh offset | `±0.0955 m` by side | Go2 USD / renderer articulation |
+| Flat observation shape | 48 = base(12) + joint_pos(12) + joint_vel(12) + prev_action(12) | exported `go2_policy.pt` |
+| Rough observation shape | 235 = flat 48 + 17x11 height scan | exported `go2_rough_policy.pt` / Isaac Lab `GridPatternCfg(resolution=0.1, size=[1.6,1.0])` |
+| Action shape | 12 | exported `go2_policy.pt` |
+| `simToPolicy` | `[0,4,8, 1,5,9, 2,6,10, 3,7,11]` | Isaac Lab action-manager dump |
+
+Go2 flat is a direct position policy. Isaac Lab's training config reports a
+`DCMotor` with `stiffness=25.0`, `damping=0.5`, and `effort_limit=23.5`.
+The local runtime now uses those values directly. Keep the IsaacLab action
+scale and joint order exact before changing those motor values; if policy
+rollout falls, treat Go2 USD physics parity (link frames, COM/inertia, foot
+contacts) as the next suspect rather than guessing a new policy order.
+
+In the captured Isaac Lab run,
+`JointPositionAction(joint_names=[".*"], preserve_order=false)` resolved both
+`env.scene["robot"].data.joint_names` and
+`env.action_manager._terms["joint_pos"]._joint_names` to:
+
+```text
+[FL_hip_joint, FR_hip_joint, RL_hip_joint, RR_hip_joint,
+ FL_thigh_joint, FR_thigh_joint, RL_thigh_joint, RR_thigh_joint,
+ FL_calf_joint, FR_calf_joint, RL_calf_joint, RR_calf_joint]
+```
+
+Do not use the Go2 USD `robotJoints` metadata order as the policy order; the
+training action-manager order above is the value that matters for the exported
+flat policy.
+
+The app's default Go2 selection currently points at the rough export by
+default (`PolicyModels/go2_rough_policy.mlmodelc`) while retaining the flat
+export as `PolicyModelConfiguration.go2Flat`. UI/debug selection flows through
+`RobotPolicyKind` / `RobotPolicySelection`: choose the robot type separately
+from the policy option, then build the renderer from the selected robot and
+the policy loop/provider from the selected policy runtime. Keep policy options
+filtered to compatible robot kinds unless intentionally adding an experiment
+mode for cross-robot policies.
+
+`make POLICY_VARIANT=go2 fetch-policies` maps
+`unitree_go2_flat/exported/policy.pt` to
+`isaac_policy_sources/Go2_Policies/go2_policy.pt`. Use
+`POLICY_VARIANT=go2_rough` for
+`unitree_go2_rough/exported/policy.pt` →
+`isaac_policy_sources/Go2_Policies/go2_rough_policy.pt`.
+
+The rough model appends height scan observations after index 48. Until a Jolt
+heightfield terrain exists, the local observation path fills those 187 entries
+with the flat-ground Isaac Lab height-scan value:
+
+```text
+height_sample = clip(base_z - ground_z - 0.5, -1, 1)
+```
+
+For real rough terrain parity, replace that constant fill with the same 17x11
+yaw-aligned grid used by Isaac Lab and sample the local terrain height at each
+ray point.
+
+### 4.4 Unitree H1 — `kH1Config` / `IsaacPolicyRuntimeConfiguration.h1Flat`
 
 | Parameter | Value | Source |
 |---|---|---|
@@ -270,7 +363,7 @@ add an H1-specific external torque drive unless a future regression proves the
 position motor cannot hold the articulation; the current walking path passes
 without an external upright-assist fallback.
 
-### 4.4 Other Isaac-Lab values reproduced in the simulator
+### 4.5 Other Isaac-Lab values reproduced in the simulator
 
 - **Self-collision off** (`Layers::kMoving` does not collide with itself in
   the broad-phase / object filter).
@@ -282,7 +375,7 @@ without an external upright-assist fallback.
   actuator paths, prefer matching Isaac Sim's per-physics-step actuator call
   before adding smoothing; smoothing can hide cadence or actuator-state bugs.
 
-### 4.5 Policy actuator types matter
+### 4.6 Policy actuator types matter
 
 Before tuning gains, identify the controller type from the Isaac Sim robot
 class and environment YAML:
@@ -367,6 +460,15 @@ From the robot's USD (or PhysX in Isaac Sim):
 
 - `articulation.dof_names` — copy the **exact list** in PhysX order.
 - Spawn height (`position=[..., z]` in the controller, minus base half-height).
+
+From Isaac Lab's action manager, when `joint_names` uses a regex:
+
+- Print `env.scene["robot"].data.joint_names`.
+- Print `env.action_manager._terms["joint_pos"]._joint_names` (or the
+  equivalent action term's resolved joint list).
+- Prefer this action-manager order over USD metadata when it differs, because
+  it is the order used by the exported network actions and `last_action`
+  observations.
 
 ### 6.2 Add the simulator config
 
