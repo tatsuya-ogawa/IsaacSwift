@@ -124,6 +124,47 @@ struct IsaacSwiftTests {
         #expect(matricesApproximatelyEqual(zeroTransforms[frThighIndex], activeTransforms[frThighIndex]))
     }
 
+    @Test func go2PolicyDefaultPosesStayInSyncBetweenRuntimeAndRenderer() {
+        func restAngle(_ profile: RobotArticulationProfile, _ path: String) -> Float? {
+            profile.transformOverrideByNodePath[path]?.restAngleOffset
+        }
+        func expectGo2Profile(_ profile: RobotArticulationProfile,
+                              matches defaultJointPositions: [Float]) {
+            let jointPaths = [
+                "/go2_description/FL_hip",
+                "/go2_description/FL_thigh",
+                "/go2_description/FL_calf",
+                "/go2_description/FR_hip",
+                "/go2_description/FR_thigh",
+                "/go2_description/FR_calf",
+                "/go2_description/RL_hip",
+                "/go2_description/RL_thigh",
+                "/go2_description/RL_calf",
+                "/go2_description/RR_hip",
+                "/go2_description/RR_thigh",
+                "/go2_description/RR_calf",
+            ]
+            #expect(defaultJointPositions.count == jointPaths.count)
+            for (index, path) in jointPaths.enumerated() {
+                #expect(abs((restAngle(profile, path) ?? .nan) - defaultJointPositions[index]) <= 0.001,
+                        "\(path) renderer rest angle drifted from runtime default joint position")
+            }
+        }
+
+        let walkingDefaults = IsaacPolicyRuntimeConfiguration.go2.defaultJointPositions!
+        let backflipDefaults = IsaacPolicyRuntimeConfiguration.go2Backflip.defaultJointPositions!
+        let defaultGo2Profile = Renderer.articulationProfile(for: .go2)
+        let walkingProfile = Renderer.articulationProfile(for: .go2,
+                                                          policyRuntimeConfiguration: .go2)
+        let backflipProfile = Renderer.articulationProfile(for: .go2,
+                                                           policyRuntimeConfiguration: .go2Backflip)
+
+        #expect(walkingDefaults != backflipDefaults)
+        expectGo2Profile(defaultGo2Profile, matches: walkingDefaults)
+        expectGo2Profile(walkingProfile, matches: walkingDefaults)
+        expectGo2Profile(backflipProfile, matches: backflipDefaults)
+    }
+
     @Test func resolvesH1ArticulationFromUSDZ() throws {
         let assetURL = try Renderer.preparedLoadingAssetURL(from: h1USDZURL())
         let profile = Renderer.articulationProfile(for: .H1)
@@ -169,24 +210,28 @@ struct IsaacSwiftTests {
         let go2Configuration = PolicyModelConfiguration.go2
         let go2FlatConfiguration = PolicyModelConfiguration.go2Flat
         let go2RoughConfiguration = PolicyModelConfiguration.go2Rough
+        let go2BackflipConfiguration = PolicyModelConfiguration.go2Backflip
         #expect(go2Configuration == go2RoughConfiguration)
         #expect(PolicyModelConfiguration.configuration(for: .go2) == go2Configuration)
         #expect(RobotPolicyKind.anymalC.modelConfiguration == anymalConfiguration)
         #expect(RobotPolicyKind.anymalCRough.modelConfiguration == anymalRoughConfiguration)
         #expect(RobotPolicyKind.go2Flat.modelConfiguration == go2FlatConfiguration)
         #expect(RobotPolicyKind.go2Rough.modelConfiguration == go2RoughConfiguration)
+        #expect(RobotPolicyKind.go2Backflip.modelConfiguration == go2BackflipConfiguration)
         let bundledSpotURL = PolicyModelRunner.bundledModelURL(configuration: spotConfiguration)
         let bundledAnymalURL = PolicyModelRunner.bundledModelURL(configuration: anymalConfiguration)
         let bundledAnymalRoughURL = PolicyModelRunner.bundledModelURL(configuration: anymalRoughConfiguration)
         let bundledH1URL = PolicyModelRunner.bundledModelURL(configuration: h1Configuration)
         let bundledGo2FlatURL = PolicyModelRunner.bundledModelURL(configuration: go2FlatConfiguration)
         let bundledGo2RoughURL = PolicyModelRunner.bundledModelURL(configuration: go2RoughConfiguration)
+        let bundledGo2BackflipURL = PolicyModelRunner.bundledModelURL(configuration: go2BackflipConfiguration)
         let repositorySpotURL = PolicyModelRunner.repositoryModelURL(configuration: spotConfiguration)
         let repositoryAnymalURL = PolicyModelRunner.repositoryModelURL(configuration: anymalConfiguration)
         let repositoryAnymalRoughURL = PolicyModelRunner.repositoryModelURL(configuration: anymalRoughConfiguration)
         let repositoryH1URL = PolicyModelRunner.repositoryModelURL(configuration: h1Configuration)
         let repositoryGo2FlatURL = PolicyModelRunner.repositoryModelURL(configuration: go2FlatConfiguration)
         let repositoryGo2RoughURL = PolicyModelRunner.repositoryModelURL(configuration: go2RoughConfiguration)
+        let repositoryGo2BackflipURL = PolicyModelRunner.repositoryModelURL(configuration: go2BackflipConfiguration)
 
         #expect(bundledSpotURL != nil || repositorySpotURL.map { FileManager.default.fileExists(atPath: $0.path) } == true)
         #expect(bundledAnymalURL != nil || repositoryAnymalURL.map { FileManager.default.fileExists(atPath: $0.path) } == true)
@@ -194,6 +239,7 @@ struct IsaacSwiftTests {
         #expect(bundledH1URL != nil || repositoryH1URL.map { FileManager.default.fileExists(atPath: $0.path) } == true)
         #expect(bundledGo2FlatURL != nil || repositoryGo2FlatURL.map { FileManager.default.fileExists(atPath: $0.path) } == true)
         #expect(bundledGo2RoughURL != nil || repositoryGo2RoughURL.map { FileManager.default.fileExists(atPath: $0.path) } == true)
+        #expect(bundledGo2BackflipURL != nil || repositoryGo2BackflipURL.map { FileManager.default.fileExists(atPath: $0.path) } == true)
 
         let spotRunner = try PolicyModelRunner(configuration: spotConfiguration)
         let anymalRunner = try PolicyModelRunner(configuration: anymalConfiguration)
@@ -201,12 +247,14 @@ struct IsaacSwiftTests {
         let h1Runner = try PolicyModelRunner(configuration: h1Configuration)
         let go2FlatRunner = try PolicyModelRunner(configuration: go2FlatConfiguration)
         let go2RoughRunner = try PolicyModelRunner(configuration: go2RoughConfiguration)
+        let go2BackflipRunner = try PolicyModelRunner(configuration: go2BackflipConfiguration)
         #expect(spotRunner.observationCount == 48)
         #expect(anymalRunner.observationCount == 48)
         #expect(anymalRoughRunner.observationCount == 235)
         #expect(h1Runner.observationCount == 69)
         #expect(go2FlatRunner.observationCount == 48)
         #expect(go2RoughRunner.observationCount == 235)
+        #expect(go2BackflipRunner.observationCount == 60)
 
         let spotActions = try spotRunner.predictActions(observations: spotRunner.zeroObservations())
         let anymalActions = try anymalRunner.predictActions(observations: anymalRunner.zeroObservations())
@@ -214,18 +262,21 @@ struct IsaacSwiftTests {
         let h1Actions = try h1Runner.predictActions(observations: h1Runner.zeroObservations())
         let go2FlatActions = try go2FlatRunner.predictActions(observations: go2FlatRunner.zeroObservations())
         let go2RoughActions = try go2RoughRunner.predictActions(observations: go2RoughRunner.zeroObservations())
+        let go2BackflipActions = try go2BackflipRunner.predictActions(observations: go2BackflipRunner.zeroObservations())
         #expect(!spotActions.isEmpty)
         #expect(!anymalActions.isEmpty)
         #expect(anymalRoughActions.count == 12)
         #expect(h1Actions.count == 19)
         #expect(go2FlatActions.count == 12)
         #expect(go2RoughActions.count == 12)
+        #expect(go2BackflipActions.count == 12)
         #expect(spotActions.reduce(true) { $0 && $1.isFinite })
         #expect(anymalActions.reduce(true) { $0 && $1.isFinite })
         #expect(anymalRoughActions.reduce(true) { $0 && $1.isFinite })
         #expect(h1Actions.reduce(true) { $0 && $1.isFinite })
         #expect(go2FlatActions.reduce(true) { $0 && $1.isFinite })
         #expect(go2RoughActions.reduce(true) { $0 && $1.isFinite })
+        #expect(go2BackflipActions.reduce(true) { $0 && $1.isFinite })
 
         let actionProvider = DemoPolicyActionProvider(runner: spotRunner)
         let demoActionsA = actionProvider.currentActions(at: 0)
@@ -254,6 +305,15 @@ struct IsaacSwiftTests {
         let go2RoughDemoActions = go2RoughProvider.currentActions(at: 0)
         #expect(go2RoughDemoActions.count == 12)
         #expect(go2RoughDemoActions.reduce(true) { $0 && $1.isFinite })
+
+        let go2BackflipProvider = DemoPolicyActionProvider(runner: go2BackflipRunner,
+                                                           configuration: .go2Backflip)
+        let go2BackflipDelayedActions = go2BackflipProvider.currentActions(at: 0)
+        let go2BackflipNextActions = go2BackflipProvider.currentActions(at: IsaacPolicyRuntimeConfiguration.go2Backflip.policyUpdateInterval)
+        #expect(go2BackflipDelayedActions == Array(repeating: Float(0), count: 12),
+                "Go2 backflip must execute the previous action on the first tick to match Isaac Lab action_latency")
+        #expect(go2BackflipNextActions.count == 12)
+        #expect(go2BackflipNextActions.reduce(true) { $0 && $1.isFinite })
     }
 
     @Test func robotPolicySelectionsExposeCompatiblePolicyOptions() {
@@ -270,12 +330,13 @@ struct IsaacSwiftTests {
         }
 
         #expect(RobotPolicyKind.compatible(with: .anymalC) == [.anymalC, .anymalCRough])
-        #expect(RobotPolicyKind.compatible(with: .go2) == [.go2Flat, .go2Rough])
+        #expect(RobotPolicyKind.compatible(with: .go2) == [.go2Flat, .go2Rough, .go2Backflip])
         #expect(RobotPolicySelection.default.robotKind == RobotModelDefinitions.defaultKind)
         #expect(RobotPolicySelection(robotKind: .anymalC).policyKind == .anymalC)
         #expect(RobotPolicySelection(robotKind: .anymalC, policyKind: .anymalCRough).policyKind == .anymalCRough)
         #expect(RobotPolicySelection(robotKind: .go2).policyKind == .go2Rough)
         #expect(RobotPolicySelection(robotKind: .go2, policyKind: .go2Flat).policyKind == .go2Flat)
+        #expect(RobotPolicySelection(robotKind: .go2, policyKind: .go2Backflip).policyKind == .go2Backflip)
         #expect(RobotPolicySelection(robotKind: .spot, policyKind: .go2Rough).policyKind == .spotFlat)
     }
 
@@ -295,11 +356,15 @@ struct IsaacSwiftTests {
         #expect(abs(IsaacPolicyRuntimeConfiguration.anymalC.physicsTimeStep - 0.005) <= 1e-8)
         #expect(abs(IsaacPolicyRuntimeConfiguration.spotFlat.physicsTimeStep - 0.002) <= 1e-8)
         #expect(abs(IsaacPolicyRuntimeConfiguration.go2.physicsTimeStep - 0.005) <= 1e-8)
+        #expect(abs(IsaacPolicyRuntimeConfiguration.go2Backflip.physicsTimeStep - 0.005) <= 1e-8)
         #expect(abs(IsaacPolicyRuntimeConfiguration.h1Flat.physicsTimeStep - 0.005) <= 1e-8)
         #expect(IsaacPolicyRuntimeConfiguration.anymalC.policyDecimation == 4)
         #expect(IsaacPolicyRuntimeConfiguration.spotFlat.policyDecimation == 10)
         #expect(IsaacPolicyRuntimeConfiguration.go2.policyDecimation == 4)
+        #expect(IsaacPolicyRuntimeConfiguration.go2Backflip.policyDecimation == 4)
         #expect(IsaacPolicyRuntimeConfiguration.h1Flat.policyDecimation == 4)
+        #expect(IsaacPolicyRuntimeConfiguration.go2Backflip.observationLayout == .go2Backflip(maxEpisodeLength: 100))
+        #expect(IsaacPolicyRuntimeConfiguration.go2Backflip.usesOneStepActionLatency)
         #expect(abs(DemoPolicyActionProvider.isaacPolicyUpdateInterval - 0.02) <= 1e-8)
 
         var scheduler = PolicyUpdateScheduler(updateInterval: DemoPolicyActionProvider.isaacPolicyUpdateInterval)
@@ -441,6 +506,19 @@ struct IsaacSwiftTests {
         let actual = IsaacPolicyRuntimeConfiguration.go2.simToPolicyJointPermutation
         #expect(actual == expected,
                 "Go2 sim->policy permutation drifted: got \(actual)")
+    }
+
+    @Test func go2BackflipSimToPolicyPermutationMatchesIsaacTaskOrder() {
+        // Sim is leg-major:
+        //   [FL_hip, FL_thigh, FL_calf, FR_hip, FR_thigh, FR_calf,
+        //    RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf]
+        // The backflip DirectRLEnv preserves its explicit Isaac joint order:
+        //   [FR_hip, FR_thigh, FR_calf, FL_hip, FL_thigh, FL_calf,
+        //    RR_hip, RR_thigh, RR_calf, RL_hip, RL_thigh, RL_calf]
+        let expected = [3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8]
+        let actual = IsaacPolicyRuntimeConfiguration.go2Backflip.simToPolicyJointPermutation
+        #expect(actual == expected,
+                "Go2 backflip sim->policy permutation drifted: got \(actual)")
     }
 
     @Test func h1SimToPolicyPermutationMatchesFlatTerrainDofOrder() {

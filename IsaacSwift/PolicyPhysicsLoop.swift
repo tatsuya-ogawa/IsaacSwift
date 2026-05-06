@@ -46,6 +46,13 @@ final class PolicyPhysicsLoop {
         simulator.jointActuator != nil
     }
 
+    private var episodeDuration: TimeInterval? {
+        if case .go2Backflip(let maxEpisodeLength) = configuration.observationLayout {
+            return TimeInterval(maxEpisodeLength) * configuration.policyUpdateInterval
+        }
+        return nil
+    }
+
     /// Incremented each time the simulator actually advances (for UI sync).
     private(set) var stepCount: Int = 0
 
@@ -84,12 +91,34 @@ final class PolicyPhysicsLoop {
 
     private static func applyRuntimeOverrides(on simulator: IsaacSwiftAnymalSimulator,
                                               configuration: IsaacPolicyRuntimeConfiguration) {
-        guard configuration == .anymalRough else { return }
-        // Isaac Lab's rough direct ANYmal export starts on terrain origins
-        // that place the root around z=0.70, and its ActuatorNetLSTM already
-        // models actuator dynamics. Do not add the local target EMA again.
-        simulator.spawnPositionWorld = SIMD3<Float>(0, 0, 0.70)
-        simulator.motorTargetSmoothingTau = 0
+        var shouldReset = false
+        if simulator.robotKind == configuration.robotKind,
+           let defaultJointPositions = configuration.defaultJointPositions {
+            simulator.defaultJointPositions = defaultJointPositions.map { NSNumber(value: $0) }
+            shouldReset = true
+        }
+
+        if configuration == .anymalRough {
+            // Isaac Lab's rough direct ANYmal export starts on terrain origins
+            // that place the root around z=0.70, and its ActuatorNetLSTM already
+            // models actuator dynamics. Do not add the local target EMA again.
+            simulator.spawnPositionWorld = SIMD3<Float>(0, 0, 0.70)
+            simulator.motorTargetSmoothingTau = 0
+            shouldReset = true
+        } else if case .go2Backflip = configuration.observationLayout {
+            // IsaacSim-go2-backflip overrides the flat Go2 standing pose.
+            // Keeping the flat +/-0.1 hip defaults blocks the trained takeoff.
+            simulator.spawnPositionWorld = SIMD3<Float>(0, 0, 0.34)
+            simulator.jointStiffness = 70.0
+            simulator.jointDamping = 4.5
+            simulator.maxJointTorque = 21.0
+            simulator.motorTargetSmoothingTau = 0
+            shouldReset = true
+        }
+
+        if shouldReset {
+            simulator.reset()
+        }
     }
 
     /// For ANYmal-C we pair the simulator with the bundled ANYdrive
@@ -181,6 +210,10 @@ final class PolicyPhysicsLoop {
     /// One fixed-rate policy + physics tick. Should be called at exactly
     /// `policyUpdateInterval` intervals (caller manages the schedule).
     private func advanceOneTick() {
+        if let episodeDuration, logicalTime >= episodeDuration {
+            resetEpisode()
+        }
+
         let policyDt = configuration.policyUpdateInterval
         let observation = simulator.currentObservation()
         publishObservationFeedback(observation, at: logicalTime)
@@ -200,6 +233,15 @@ final class PolicyPhysicsLoop {
         _ = advancePhysics(scaledActions: scaled, elapsed: policyDt)
         logicalTime += policyDt
         stepCount += 1
+    }
+
+    private func resetEpisode() {
+        simulator.reset()
+        provider?.resetPolicyState()
+        let zero = Array(repeating: Float(0), count: Int(simulator.jointCount))
+        lastJointDeltas = zero
+        lastRawActions = zero
+        logicalTime = 0
     }
 
     private func advancePhysics(scaledActions: [Float], elapsed: TimeInterval) -> [Float] {

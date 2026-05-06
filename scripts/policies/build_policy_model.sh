@@ -66,9 +66,19 @@ case "$policy_variant" in
     input_shape="1,235"
     missing_hint="Run: make POLICY_VARIANT=go2_rough fetch-policies"
     ;;
+  go2_backflip|go2-backflip)
+    policy_pt="$policy_source_root/Go2_Policies/go2_backflip_policy.pt"
+    if [[ ! -f "$policy_pt" && -f "tmp/go2_backflip_policy.pt" ]]; then
+      policy_pt="tmp/go2_backflip_policy.pt"
+    fi
+    package_name="go2_backflip_policy.mlpackage"
+    policy_dest_dir="${POLICY_MODEL_DEST_DIR:-PolicyModels/go2_backflip_policy.mlmodelc}"
+    input_shape="1,60"
+    missing_hint="Run: make POLICY_VARIANT=go2_backflip fetch-policies"
+    ;;
   *)
     echo "Unsupported policy variant: $policy_variant" >&2
-    echo "Supported variants: spot, anymal, anymal_rough, h1, go2, go2_rough" >&2
+    echo "Supported variants: spot, anymal, anymal_rough, h1, go2, go2_rough, go2_backflip" >&2
     exit 1
     ;;
 esac

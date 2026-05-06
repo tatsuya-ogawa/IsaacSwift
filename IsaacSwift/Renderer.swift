@@ -121,6 +121,7 @@ class Renderer: NSObject, MTKViewDelegate {
             let result = try Renderer.buildRobotScene(device: device,
                                                       mtlVertexDescriptor: mtlVertexDescriptor,
                                                       defaultTexture: whiteTexture,
+                                                      policyRuntimeConfiguration: runtimeConfiguration,
                                                       robotKind: robotKind)
             scene = result.scene
             resolvedKind = result.robotKind
@@ -129,7 +130,8 @@ class Renderer: NSObject, MTKViewDelegate {
             return nil
         }
         self.robotKind = resolvedKind
-        self.articulationProfile = Renderer.articulationProfile(for: resolvedKind)
+        self.articulationProfile = Renderer.articulationProfile(for: resolvedKind,
+                                                                policyRuntimeConfiguration: runtimeConfiguration)
 
         meshes = scene.meshes
         sceneNodes = scene.nodes

@@ -41,17 +41,45 @@ struct PolicyJointFeedbackSnapshot {
     let lastFeedbackTime: TimeInterval?
 }
 
+enum PolicyObservationLayout: Equatable {
+    case isaacLab
+    case go2Backflip(maxEpisodeLength: Int)
+}
+
 struct IsaacPolicyRuntimeConfiguration: Equatable {
     let robotKind: IsaacSwiftRobotKind
     let physicsTimeStep: TimeInterval
     let policyDecimation: Int
     let actionScale: Float
     let defaultCommand: SIMD3<Float>
+    /// Policy-specific simulator joint defaults in local simulator/render
+    /// joint order. When present, physics initialization and renderer rest
+    /// angles both read from this single source.
+    let defaultJointPositions: [Float]?
     /// Permutation that maps local Jolt simulator joint indices to the order
     /// the bundled policy was trained with. PhysX `dof_names` can differ from
     /// USD file order: Spot/ANYmal policies use type-grouped leg joints, while
     /// H1 uses a breadth-first traversal across pelvis, legs, torso, and arms.
     let simToPolicyJointPermutation: [Int]
+    let observationLayout: PolicyObservationLayout
+
+    init(robotKind: IsaacSwiftRobotKind,
+         physicsTimeStep: TimeInterval,
+         policyDecimation: Int,
+         actionScale: Float,
+         defaultCommand: SIMD3<Float>,
+         defaultJointPositions: [Float]? = nil,
+         simToPolicyJointPermutation: [Int],
+         observationLayout: PolicyObservationLayout = .isaacLab) {
+        self.robotKind = robotKind
+        self.physicsTimeStep = physicsTimeStep
+        self.policyDecimation = policyDecimation
+        self.actionScale = actionScale
+        self.defaultCommand = defaultCommand
+        self.defaultJointPositions = defaultJointPositions
+        self.simToPolicyJointPermutation = simToPolicyJointPermutation
+        self.observationLayout = observationLayout
+    }
 
     var jointCount: Int {
         simToPolicyJointPermutation.count
@@ -61,6 +89,14 @@ struct IsaacPolicyRuntimeConfiguration: Equatable {
         physicsTimeStep * Double(policyDecimation)
     }
 
+    var usesOneStepActionLatency: Bool {
+        switch observationLayout {
+        case .isaacLab:
+            return false
+        case .go2Backflip:
+            return true
+        }
+    }
 }
 
 protocol PolicyActionProvider: AnyObject {
@@ -159,6 +195,12 @@ struct PolicyModelConfiguration: Equatable {
                                                    outputFeatureName: "actions",
                                                    repositoryRelativePath: "PolicyModels/go2_rough_policy.mlmodelc")
 
+    static let go2Backflip = PolicyModelConfiguration(resourceName: "go2_backflip_policy",
+                                                      resourceExtension: "mlmodelc",
+                                                      inputFeatureName: "observations",
+                                                      outputFeatureName: "actions",
+                                                      repositoryRelativePath: "PolicyModels/go2_backflip_policy.mlmodelc")
+
     static let go2 = go2Rough
 
     static func configuration(for robotKind: IsaacSwiftRobotKind) -> PolicyModelConfiguration {
@@ -172,6 +214,7 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
         var jointVelocities: [Float]
         var previousRawActions: [Float]
         var currentRawActions: [Float]
+        var lastPolicyActions: [Float]
         var lastFeedbackTime: TimeInterval?
         // Body-frame base state required for a full Isaac Lab observation.
         // Defaults assume the robot is standing upright at rest.
@@ -223,6 +266,7 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
                                            jointVelocities: zeroActions,
                                            previousRawActions: zeroActions,
                                            currentRawActions: zeroActions,
+                                           lastPolicyActions: zeroActions,
                                            lastFeedbackTime: nil,
                                            velocityCommand: command ?? configuration.defaultCommand)
         self.policyUpdateScheduler = PolicyUpdateScheduler(updateInterval: configuration.policyUpdateInterval)
@@ -308,6 +352,21 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
         }
 
         lock.lock()
+        if configuration.usesOneStepActionLatency {
+            // Go2 backflip's task env observes the fresh `_actions` but
+            // executes `_last_actions` for one 50 Hz control tick.
+            let delayedPolicyActions = feedbackState.previousRawActions
+            var delayedSimActions = Array(repeating: Float(0), count: jointCount)
+            for (policyIdx, value) in delayedPolicyActions.enumerated() where policyIdx < jointCount {
+                delayedSimActions[permPolicyToSim[policyIdx]] = value
+            }
+            feedbackState.lastPolicyActions = delayedPolicyActions
+            feedbackState.previousRawActions = policyActions
+            feedbackState.currentRawActions = delayedSimActions
+            lock.unlock()
+            return delayedSimActions
+        }
+        feedbackState.lastPolicyActions = feedbackState.previousRawActions
         feedbackState.previousRawActions = policyActions
         feedbackState.currentRawActions = simActions
         lock.unlock()
@@ -322,6 +381,7 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
                                       jointVelocities: zero,
                                       previousRawActions: zero,
                                       currentRawActions: zero,
+                                      lastPolicyActions: zero,
                                       lastFeedbackTime: nil,
                                       velocityCommand: command)
         policyUpdateScheduler = PolicyUpdateScheduler(updateInterval: configuration.policyUpdateInterval)
@@ -366,11 +426,18 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
 
     private func demoObservations(at time: TimeInterval) -> [Float] {
         var observations = runner.zeroObservations()
-        _ = time
 
         lock.lock()
         let feedbackState = self.feedbackState
         lock.unlock()
+
+        if case .go2Backflip(let maxEpisodeLength) = configuration.observationLayout {
+            writeGo2BackflipObservations(&observations,
+                                         feedbackState: feedbackState,
+                                         time: time,
+                                         maxEpisodeLength: maxEpisodeLength)
+            return observations
+        }
 
         // Isaac Lab locomotion observation layout:
         //   [0:3]   base_lin_vel_b
@@ -432,6 +499,61 @@ final class DemoPolicyActionProvider: PolicyActionProvider {
         }
 
         return observations
+    }
+
+    private func writeGo2BackflipObservations(_ observations: inout [Float],
+                                              feedbackState: FeedbackState,
+                                              time: TimeInterval,
+                                              maxEpisodeLength: Int) {
+        func write(_ value: SIMD3<Float>, at offset: Int, scale: Float = 1) {
+            if observations.count > offset + 0 { observations[offset + 0] = value.x * scale }
+            if observations.count > offset + 1 { observations[offset + 1] = value.y * scale }
+            if observations.count > offset + 2 { observations[offset + 2] = value.z * scale }
+        }
+
+        write(feedbackState.baseAngularVelocityBody, at: 0, scale: 0.25)
+        write(feedbackState.projectedGravityBody, at: 3)
+
+        let jointCount = configuration.jointCount
+        let jointPositionOffset = 6
+        let jointVelocityOffset = jointPositionOffset + jointCount
+        let actionOffset = jointVelocityOffset + jointCount
+        let lastActionOffset = actionOffset + jointCount
+        let phaseOffset = lastActionOffset + jointCount
+
+        let jointPositionCount = Swift.min(feedbackState.jointPositionDeltas.count,
+                                           Swift.min(max(observations.count - jointPositionOffset, 0), jointCount))
+        for index in 0..<jointPositionCount {
+            observations[jointPositionOffset + index] = feedbackState.jointPositionDeltas[index]
+        }
+
+        let jointVelocityCount = Swift.min(feedbackState.jointVelocities.count,
+                                           Swift.min(max(observations.count - jointVelocityOffset, 0), jointCount))
+        for index in 0..<jointVelocityCount {
+            observations[jointVelocityOffset + index] = feedbackState.jointVelocities[index] * 0.05
+        }
+
+        let actionCount = Swift.min(feedbackState.previousRawActions.count,
+                                    Swift.min(max(observations.count - actionOffset, 0), jointCount))
+        for index in 0..<actionCount {
+            observations[actionOffset + index] = feedbackState.previousRawActions[index]
+        }
+
+        let lastActionCount = Swift.min(feedbackState.lastPolicyActions.count,
+                                        Swift.min(max(observations.count - lastActionOffset, 0), jointCount))
+        for index in 0..<lastActionCount {
+            observations[lastActionOffset + index] = feedbackState.lastPolicyActions[index]
+        }
+
+        guard observations.count >= phaseOffset + 6 else { return }
+        let episodeStep = max(0, Int((time / configuration.policyUpdateInterval).rounded(.down)))
+        let phase = Float.pi * Float(episodeStep) / Float(max(maxEpisodeLength, 1))
+        observations[phaseOffset + 0] = sin(phase)
+        observations[phaseOffset + 1] = cos(phase)
+        observations[phaseOffset + 2] = sin(phase / 2.0)
+        observations[phaseOffset + 3] = cos(phase / 2.0)
+        observations[phaseOffset + 4] = sin(phase / 4.0)
+        observations[phaseOffset + 5] = cos(phase / 4.0)
     }
 }
 
